@@ -1,0 +1,214 @@
+/*
+ * Typography of the document itself. Shared by the editor page, print output and Word/HTML export,
+ * so every rule is plain CSS scoped to `.doc-content`. Vertical rhythm uses bottom margins only:
+ * no margin collapsing keeps page layout measurements exact.
+ */
+
+/* Base text. Typed spaces are content, so they are kept exactly. */
+.doc-content {
+  color: #1f2328;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 12pt;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 4;
+}
+
+/* Paragraphs without an explicit direction follow their own text (Arabic and Latin in one document). */
+.doc-content :is(p, h1, h2, h3, h4, h5, h6):not([dir]) {
+  unicode-bidi: plaintext;
+}
+
+/* Paragraphs and headings. */
+.doc-content p {
+  margin: 0 0 6pt;
+}
+
+.doc-content h1,
+.doc-content h2,
+.doc-content h3,
+.doc-content h4,
+.doc-content h5,
+.doc-content h6 {
+  margin: 0 0 6pt;
+  padding-top: 6pt;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.doc-content h1 {
+  font-size: 20pt;
+}
+
+.doc-content h2 {
+  font-size: 16pt;
+}
+
+.doc-content h3 {
+  font-size: 14pt;
+}
+
+.doc-content h4 {
+  font-size: 12pt;
+}
+
+.doc-content h5 {
+  font-size: 11pt;
+}
+
+.doc-content h6 {
+  font-size: 10pt;
+}
+
+/* Lists, including task lists with a checkbox label and a content column. */
+.doc-content ul,
+.doc-content ol {
+  margin: 0 0 6pt;
+  padding-left: 24pt;
+}
+
+.doc-content li > p {
+  margin-bottom: 2pt;
+}
+
+.doc-content ul[data-type="taskList"] {
+  padding-left: 2pt;
+  list-style: none;
+}
+
+.doc-content ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6pt;
+}
+
+.doc-content ul[data-type="taskList"] li > label {
+  flex: 0 0 auto;
+  margin-top: 0.3em;
+  user-select: none;
+}
+
+.doc-content ul[data-type="taskList"] li > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.doc-content ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: #667085;
+  text-decoration: line-through;
+}
+
+/* Quotes. */
+.doc-content blockquote {
+  margin: 0 0 6pt;
+  padding: 2pt 0 2pt 12pt;
+  border-left: 3px solid #b3c5f5;
+  color: #475467;
+}
+
+/* The last paragraph of a container adds no space below it. */
+.doc-content blockquote > p:last-child,
+.doc-content li > p:last-child,
+.doc-content td > p:last-child,
+.doc-content th > p:last-child {
+  margin-bottom: 0;
+}
+
+/* Code blocks and inline code. */
+.doc-content pre {
+  margin: 0 0 6pt;
+  padding: 8pt 10pt;
+  border-radius: 4px;
+  background: #f4f6f8;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 10pt;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.doc-content code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #eef1f4;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.9em;
+}
+
+.doc-content pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+
+/* Horizontal rule. */
+.doc-content hr {
+  height: 0;
+  margin: 0 0 6pt;
+  padding-top: 6pt;
+  border: 0;
+  border-bottom: 1px solid #c4cad4;
+}
+
+/* Inline marks. */
+.doc-content a {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.doc-content mark {
+  padding: 0 1px;
+  border-radius: 2px;
+  color: inherit;
+}
+
+/* Images are blocks aligned through their data-align attribute. */
+.doc-content img {
+  max-width: 100%;
+  height: auto;
+}
+
+.doc-content img[data-align="left"] {
+  display: block;
+  margin: 0 auto 6pt 0;
+}
+
+.doc-content img[data-align="center"] {
+  display: block;
+  margin: 0 auto 6pt;
+}
+
+.doc-content img[data-align="right"] {
+  display: block;
+  margin: 0 0 6pt auto;
+}
+
+/* Tables. */
+.doc-content table {
+  width: 100%;
+  margin: 0 0 6pt;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.doc-content td,
+.doc-content th {
+  box-sizing: border-box;
+  min-width: 1em;
+  padding: 3pt 5pt;
+  border: 1px solid #8f99a8;
+  vertical-align: top;
+}
+
+.doc-content th {
+  background: #f2f4f7;
+  font-weight: 700;
+  text-align: left;
+}
+
+/* Manual page break: invisible in print, where it starts a new sheet. */
+.doc-content .doc-page-break {
+  height: 0;
+  break-after: page;
+  page-break-after: always;
+}

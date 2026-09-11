@@ -1,0 +1,237 @@
+/*
+ * Global editor chrome: styles for toolbar buttons and for menus and popovers that Element Plus teleports to
+ * <body>, plus editor-only decorations of the editable document. Print and export use document-content.css alone.
+ */
+
+/* Toolbar button, also used by the find bar, status bar, pickers and bubble menus. */
+.doc-tb-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  box-sizing: border-box;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--el-text-color-regular);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.doc-tb-button:hover:not(:disabled) {
+  background: var(--el-fill-color-light);
+}
+
+.doc-tb-button:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: -2px;
+}
+
+.doc-tb-button.is-active {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.doc-tb-button:disabled {
+  color: var(--el-text-color-disabled);
+  cursor: not-allowed;
+}
+
+/* Dropdown trigger showing the current value (style, font, size). */
+.doc-tb-button--select {
+  justify-content: space-between;
+  padding: 0 4px 0 7px;
+}
+
+/* Narrow caret half of a split button. */
+.doc-tb-button--caret {
+  min-width: 16px;
+  padding: 0 2px;
+}
+
+.doc-tb-button__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Popovers opened from the toolbar. */
+.doc-editor-popper.el-popper {
+  border-radius: 10px;
+}
+
+.doc-editor-popper.el-popover.el-popper {
+  padding: 10px;
+}
+
+/* Dropdown menus opened from the toolbar. */
+.doc-menu.el-dropdown-menu {
+  padding: 4px;
+}
+
+.doc-menu .el-dropdown-menu__item {
+  gap: 8px;
+  min-width: 168px;
+  padding: 5px 12px 5px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.doc-menu .el-dropdown-menu__item.is-selected {
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+
+/* Keyboard shortcut aligned to the right of a menu item. */
+.doc-menu__hint {
+  margin-left: auto;
+  padding-left: 20px;
+  color: var(--el-text-color-placeholder);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* Heading previews in the paragraph style menu. */
+.doc-menu__h1 {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.doc-menu__h2 {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.doc-menu__h3 {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.doc-menu__h4 {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/*
+ * Bubble menus live in <body>. Each one receives a fresh inline z-index from Element Plus when it appears;
+ * this value only applies until then.
+ */
+.doc-bubble-host {
+  z-index: 2100;
+}
+
+/*
+ * A parent el-form-item in error state paints every input inside it red. The editor's own inputs (find bar) keep
+ * Element Plus' normal borders; the extra `.document-editor` class outranks the error selectors in any load order.
+ */
+.el-form-item.is-error .el-form-item__content .document-editor .el-input__wrapper {
+  box-shadow: 0 0 0 1px var(--el-input-border-color, var(--el-border-color)) inset;
+}
+
+.el-form-item.is-error .el-form-item__content .document-editor .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--el-input-hover-border-color) inset;
+}
+
+.el-form-item.is-error .el-form-item__content .document-editor .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--el-input-focus-border-color) inset;
+}
+
+/* Editable document: the engine sets the placeholder text inline; empty until then. */
+.doc-canvas .doc-content {
+  --doc-placeholder: "";
+}
+
+/* Editable document: placeholder of an empty document, text taken from --doc-placeholder. */
+.doc-canvas .doc-content.is-empty > p:first-child::before {
+  float: left;
+  height: 0;
+  color: #98a2b3;
+  content: var(--doc-placeholder);
+  pointer-events: none;
+}
+
+/* Editable document: manual page break drawn as a dashed line labelled with --page-break-label. */
+.doc-canvas .doc-content .doc-page-break {
+  position: relative;
+  height: 18px;
+  margin-bottom: 6pt;
+  cursor: default;
+  user-select: none;
+}
+
+.doc-canvas .doc-content .doc-page-break::before {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  border-top: 1px dashed #98a2b3;
+  content: "";
+}
+
+.doc-canvas .doc-content .doc-page-break::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 0 8px;
+  color: #667085;
+  background: #fff;
+  font:
+    10px / 16px system-ui,
+    sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  content: var(--page-break-label);
+  transform: translate(-50%, -50%);
+}
+
+/* Editable document: table cell selection and column resizing. */
+.doc-canvas .doc-content td,
+.doc-canvas .doc-content th {
+  position: relative;
+}
+
+.doc-canvas .doc-content .doc-cell-selected::after {
+  position: absolute;
+  inset: 0;
+  background: rgb(59 130 246 / 16%);
+  content: "";
+  pointer-events: none;
+}
+
+/* While cells are selected the tinted cells replace the native text selection. */
+.doc-canvas .doc-content.has-cell-selection ::selection {
+  background: transparent;
+}
+
+.doc-canvas .doc-content.is-column-resize,
+.doc-canvas .doc-content.is-column-resize * {
+  cursor: col-resize;
+}
+
+/* Editable document: task checkboxes are clickable, links are edited like text. */
+.doc-canvas .doc-content ul[data-type="taskList"] input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.doc-canvas .doc-content a {
+  cursor: text;
+}
+
+/* Search matches painted through the CSS Custom Highlight API. */
+::highlight(doc-search) {
+  background-color: rgb(250 204 21 / 45%);
+}
+
+::highlight(doc-search-current) {
+  background-color: rgb(249 115 22 / 55%);
+}
