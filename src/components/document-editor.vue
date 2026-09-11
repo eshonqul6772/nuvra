@@ -377,8 +377,8 @@ const onCanvasResize = (width: number) => {
 };
 
 /**
- * Editor-level shortcuts: find (Mod+F), replace (Mod+H), link (Mod+K), print (Mod+P) and Escape. Physical key codes
- * keep the shortcuts working with non-Latin keyboard layouts.
+ * Editor-level shortcuts: find (Mod+F), replace (Mod+H; Mod+Shift+H stays the engine's highlight), link (Mod+K), print
+ * (Mod+P) and Escape. Physical key codes keep the shortcuts working with non-Latin keyboard layouts.
  */
 const onKeydown = (event: KeyboardEvent) => {
   const mod = event.ctrlKey || event.metaKey;
@@ -386,7 +386,7 @@ const onKeydown = (event: KeyboardEvent) => {
   if (mod && !event.altKey && !event.shiftKey && key === 'KeyF') {
     event.preventDefault();
     openFind(false);
-  } else if (mod && !event.altKey && key === 'KeyH') {
+  } else if (mod && !event.altKey && !event.shiftKey && key === 'KeyH') {
     event.preventDefault();
     openFind(true);
   } else if (mod && key === 'KeyK' && !props.disabled && !sourceMode.value) {

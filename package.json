@@ -1,6 +1,6 @@
 {
   "name": "nuvra",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Word-style document editor for Vue 3: page view, tables, images, find & replace, print and Word export.",
   "keywords": [
     "vue",
@@ -14,7 +14,7 @@
   ],
   "license": "MIT",
   "author": "Eshonqul",
-  "homepage": "https://github.com/eshonqul6772/nuvra#readme",
+  "homepage": "https://nuvra-docs.vercel.app",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/eshonqul6772/nuvra.git"

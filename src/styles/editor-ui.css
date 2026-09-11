@@ -4,8 +4,11 @@
  * export use document-content.css alone.
  */
 
-/* Theme variables. Override them on `.document-editor` (or any ancestor) to restyle the editor. */
-.document-editor {
+/*
+ * Theme variables, declared with zero specificity: any rule that targets `.document-editor` overrides them, whatever
+ * the stylesheet order. They are declared on the editor element itself, so values set on an ancestor do not apply.
+ */
+:where(.document-editor) {
   --nuvra-color-primary: #409eff;
   --nuvra-color-primary-hover: #79bbff;
   --nuvra-color-primary-border: #a0cfff;
@@ -30,8 +33,11 @@
   --nuvra-fullscreen-z-index: 2000;
 }
 
-/* Dark theme, enabled by a `dark` class or `data-theme="dark"` on an ancestor such as <html>. */
-:where(.dark, [data-theme="dark"]) .document-editor {
+/*
+ * Dark theme, enabled by a `dark` class or `data-theme="dark"` on an ancestor such as <html>. Also without specificity,
+ * so `.dark .document-editor` overrides its values.
+ */
+:where(.dark .document-editor, [data-theme="dark"] .document-editor) {
   --nuvra-color-primary-hover: #66b1ff;
   --nuvra-color-primary-border: #2a598a;
   --nuvra-color-primary-muted: #213d5b;

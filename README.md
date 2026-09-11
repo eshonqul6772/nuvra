@@ -3,6 +3,8 @@
 Word-style document editor for Vue 3. A real page view with paper sizes and margins, a lighter web view for
 forms, tables, images, lists, find & replace, HTML source mode, printing and export to HTML or Word (`.doc`).
 
+**[Documentation and live demo →](https://nuvra-docs.vercel.app)**
+
 - No editor framework underneath: its own small editing engine with a sanitizing schema.
 - No UI framework either: native HTML controls, built-in SVG icons and plain CSS variables. Vue is the only
   dependency.
@@ -122,8 +124,11 @@ Numbers are pixels; strings are used as CSS lengths (`'100%'`, `'50vh'`).
 
 ### Keyboard shortcuts
 
-`Ctrl/⌘+B`, `I`, `U` — bold, italic, underline · `Ctrl/⌘+Z`, `Ctrl/⌘+Shift+Z` — undo, redo ·
-`Ctrl/⌘+F` — find · `Ctrl/⌘+H` — replace · `Ctrl/⌘+K` — link · `Ctrl/⌘+P` — print.
+`Ctrl/⌘+B`, `I`, `U` — bold, italic, underline · `Ctrl/⌘+Shift+H` — highlight · `Ctrl/⌘+Z`, `Ctrl/⌘+Shift+Z` — undo,
+redo · `Ctrl/⌘+F` — find · `Ctrl/⌘+H` — replace · `Ctrl/⌘+K` — link · `Ctrl/⌘+P` — print.
+
+The full list, with Markdown-like input rules, is in the
+[keyboard shortcuts guide](https://nuvra-docs.vercel.app/docs/keyboard-shortcuts).
 
 ## Translations
 
@@ -155,7 +160,9 @@ setEditorTranslator((key, named) => (i18n.global.te(key) ? i18n.global.t(key, na
 
 ## Theming
 
-Colors come from CSS variables declared on `.document-editor`. Override any of them there, or on an ancestor:
+Colors come from CSS variables declared on `.document-editor` with zero specificity, so any rule that targets
+`.document-editor` overrides them, whatever order the stylesheets load in. Set them on the editor element itself:
+values on an ancestor such as `body` do not apply, because the editor declares its own.
 
 ```css
 .document-editor {
@@ -192,7 +199,8 @@ Colors come from CSS variables declared on `.document-editor`. Override any of t
 | `--nuvra-shadow`                | Popovers and floating panels                         |
 | `--nuvra-fullscreen-z-index`    | Stacking order of the fullscreen editor (`2000`)     |
 
-A dark palette is applied when an ancestor (usually `<html>`) has the `dark` class or `data-theme="dark"`.
+A dark palette is applied when an ancestor (usually `<html>`) has the `dark` class or `data-theme="dark"`. To change
+dark values separately, target `.dark .document-editor`.
 
 To follow an Element Plus theme, map the variables to its own:
 
