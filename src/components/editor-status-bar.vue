@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { FileText, Maximize2, Minimize2, Minus, MoveHorizontal, Plus, ScrollText } from '@lucide/vue';
-
 import { t } from '../core/labels';
 import { type DocumentViewMode, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from '../core/page';
+import EditorIcon from './editor-icon.vue';
 
 /**
  * Bottom bar of the editor: page position, word and character counts, view switch, zoom controls and
@@ -45,8 +44,8 @@ const DEFAULT_ZOOM = 100;
 const DEFAULT_ZOOM_RATIO = (DEFAULT_ZOOM - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN);
 /** Options of the view switch with their icons and label keys. */
 const VIEW_MODES = [
-  { value: 'page', icon: FileText, label: 'editor.view.page' },
-  { value: 'web', icon: ScrollText, label: 'editor.view.web' }
+  { value: 'page', icon: 'file-text', label: 'editor.view.page' },
+  { value: 'web', icon: 'scroll-text', label: 'editor.view.web' }
 ] as const;
 
 /** Publishes a zoom value snapped to the zoom step and kept within the allowed range. */
@@ -81,7 +80,7 @@ const onSliderInput = (event: Event) => setZoom(Number((event.target as HTMLInpu
           :aria-checked="viewMode === mode.value"
           @click="viewMode = mode.value"
         >
-          <component :is="mode.icon" :size="14" />
+          <EditorIcon :name="mode.icon" :size="14" />
         </button>
       </div>
 
@@ -93,7 +92,7 @@ const onSliderInput = (event: Event) => setZoom(Number((event.target as HTMLInpu
         :aria-label="t('editor.zoomOut')"
         @click="setZoom(zoom - ZOOM_STEP)"
       >
-        <Minus :size="12" />
+        <EditorIcon name="minus" :size="12" />
       </button>
       <input
         class="status-bar__slider"
@@ -113,7 +112,7 @@ const onSliderInput = (event: Event) => setZoom(Number((event.target as HTMLInpu
         :aria-label="t('editor.zoomIn')"
         @click="setZoom(zoom + ZOOM_STEP)"
       >
-        <Plus :size="12" />
+        <EditorIcon name="plus" :size="12" />
       </button>
       <button
         type="button"
@@ -132,7 +131,7 @@ const onSliderInput = (event: Event) => setZoom(Number((event.target as HTMLInpu
         :aria-label="t('editor.fitWidth')"
         @click="emit('fitWidth')"
       >
-        <MoveHorizontal :size="14" />
+        <EditorIcon name="move-horizontal" :size="14" />
       </button>
       <button
         type="button"
@@ -141,7 +140,7 @@ const onSliderInput = (event: Event) => setZoom(Number((event.target as HTMLInpu
         :aria-label="t(fullscreen ? 'editor.exitFullscreen' : 'editor.enterFullscreen')"
         @click="emit('toggleFullscreen')"
       >
-        <component :is="fullscreen ? Minimize2 : Maximize2" :size="14" />
+        <EditorIcon :name="fullscreen ? 'minimize-2' : 'maximize-2'" :size="14" />
       </button>
     </div>
   </footer>
@@ -156,9 +155,9 @@ const onSliderInput = (event: Event) => setZoom(Number((event.target as HTMLInpu
   gap: 12px;
   min-height: 32px;
   padding: 0 6px 0 12px;
-  border-top: 1px solid var(--el-border-color-lighter);
-  color: var(--el-text-color-secondary);
-  background: var(--el-bg-color);
+  border-top: 1px solid var(--nuvra-border-lighter);
+  color: var(--nuvra-text-muted);
+  background: var(--nuvra-bg);
   font-size: 12px;
   user-select: none;
 }
@@ -173,7 +172,7 @@ const onSliderInput = (event: Event) => setZoom(Number((event.target as HTMLInpu
 
 /* Character counter at or over the limit. */
 .is-limit {
-  color: var(--el-color-danger);
+  color: var(--nuvra-color-danger);
   font-weight: 600;
 }
 
@@ -197,7 +196,7 @@ const onSliderInput = (event: Event) => setZoom(Number((event.target as HTMLInpu
   margin-right: 6px;
   padding: 2px;
   border-radius: 7px;
-  background: var(--el-fill-color-light);
+  background: var(--nuvra-fill);
 }
 
 .status-bar__segmented .doc-tb-button {
@@ -205,14 +204,14 @@ const onSliderInput = (event: Event) => setZoom(Number((event.target as HTMLInpu
 }
 
 .status-bar__segmented .doc-tb-button.is-active {
-  background: var(--el-bg-color);
+  background: var(--nuvra-bg);
   box-shadow: 0 1px 2px rgb(16 24 40 / 12%);
 }
 
 /* Zoom slider in the office style: a hairline track with a mark at 100% and a narrow thumb. */
 .status-bar__slider {
-  --slider-line: var(--el-text-color-placeholder);
-  --slider-thumb: var(--el-text-color-regular);
+  --slider-line: var(--nuvra-text-placeholder);
+  --slider-thumb: var(--nuvra-text);
 
   width: 100px;
   height: 16px;
@@ -262,16 +261,16 @@ const onSliderInput = (event: Event) => setZoom(Number((event.target as HTMLInpu
 
 .status-bar__slider:hover,
 .status-bar__slider:active {
-  --slider-thumb: var(--el-color-primary);
+  --slider-thumb: var(--nuvra-color-primary);
 }
 
 .status-bar__slider:focus-visible::-webkit-slider-thumb {
-  outline: 2px solid var(--el-color-primary-light-5);
+  outline: 2px solid var(--nuvra-color-primary-border);
   outline-offset: 1px;
 }
 
 .status-bar__slider:focus-visible::-moz-range-thumb {
-  outline: 2px solid var(--el-color-primary-light-5);
+  outline: 2px solid var(--nuvra-color-primary-border);
   outline-offset: 1px;
 }
 

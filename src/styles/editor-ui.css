@@ -1,7 +1,56 @@
 /*
- * Global editor chrome: styles for toolbar buttons and for menus and popovers that Element Plus teleports to
- * <body>, plus editor-only decorations of the editable document. Print and export use document-content.css alone.
+ * Global editor chrome: theme variables, toolbar buttons, menus, form controls, and editor-only decorations of the
+ * editable document. Popovers and menus stay inside `.document-editor`, so they inherit the variables. Print and
+ * export use document-content.css alone.
  */
+
+/* Theme variables. Override them on `.document-editor` (or any ancestor) to restyle the editor. */
+.document-editor {
+  --nuvra-color-primary: #409eff;
+  --nuvra-color-primary-hover: #79bbff;
+  --nuvra-color-primary-border: #a0cfff;
+  --nuvra-color-primary-muted: #c6e2ff;
+  --nuvra-color-primary-soft: #ecf5ff;
+  --nuvra-color-on-primary: #fff;
+  --nuvra-color-danger: #f56c6c;
+  --nuvra-color-danger-soft: #fef0f0;
+  --nuvra-text-strong: #303133;
+  --nuvra-text: #606266;
+  --nuvra-text-muted: #909399;
+  --nuvra-text-placeholder: #a8abb2;
+  --nuvra-text-disabled: #c0c4cc;
+  --nuvra-border: #dcdfe6;
+  --nuvra-border-hover: #c0c4cc;
+  --nuvra-border-light: #e4e7ed;
+  --nuvra-border-lighter: #ebeef5;
+  --nuvra-fill: #f5f7fa;
+  --nuvra-bg: #fff;
+  --nuvra-bg-overlay: #fff;
+  --nuvra-shadow: 0 0 12px rgb(0 0 0 / 12%);
+  --nuvra-fullscreen-z-index: 2000;
+}
+
+/* Dark theme, enabled by a `dark` class or `data-theme="dark"` on an ancestor such as <html>. */
+:where(.dark, [data-theme="dark"]) .document-editor {
+  --nuvra-color-primary-hover: #66b1ff;
+  --nuvra-color-primary-border: #2a598a;
+  --nuvra-color-primary-muted: #213d5b;
+  --nuvra-color-primary-soft: #18222c;
+  --nuvra-color-danger-soft: #2b1d1d;
+  --nuvra-text-strong: #e5eaf3;
+  --nuvra-text: #cfd3dc;
+  --nuvra-text-muted: #a3a6ad;
+  --nuvra-text-placeholder: #8d9095;
+  --nuvra-text-disabled: #6c6e72;
+  --nuvra-border: #4c4d4f;
+  --nuvra-border-hover: #6c6e72;
+  --nuvra-border-light: #414243;
+  --nuvra-border-lighter: #363637;
+  --nuvra-fill: #262727;
+  --nuvra-bg: #141414;
+  --nuvra-bg-overlay: #1d1e1f;
+  --nuvra-shadow: 0 0 12px rgb(0 0 0 / 72%);
+}
 
 /* Toolbar button, also used by the find bar, status bar, pickers and bubble menus. */
 .doc-tb-button {
@@ -16,7 +65,7 @@
   padding: 0 5px;
   border: 0;
   border-radius: 6px;
-  color: var(--el-text-color-regular);
+  color: var(--nuvra-text);
   background: transparent;
   font: inherit;
   font-size: 13px;
@@ -29,21 +78,21 @@
 }
 
 .doc-tb-button:hover:not(:disabled) {
-  background: var(--el-fill-color-light);
+  background: var(--nuvra-fill);
 }
 
 .doc-tb-button:focus-visible {
-  outline: 2px solid var(--el-color-primary);
+  outline: 2px solid var(--nuvra-color-primary);
   outline-offset: -2px;
 }
 
 .doc-tb-button.is-active {
-  color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
+  color: var(--nuvra-color-primary);
+  background: var(--nuvra-color-primary-soft);
 }
 
 .doc-tb-button:disabled {
-  color: var(--el-text-color-disabled);
+  color: var(--nuvra-text-disabled);
   cursor: not-allowed;
 }
 
@@ -64,39 +113,58 @@
   text-overflow: ellipsis;
 }
 
-/* Popovers opened from the toolbar. */
-.doc-editor-popper.el-popper {
-  border-radius: 10px;
-}
-
-.doc-editor-popper.el-popover.el-popper {
-  padding: 10px;
-}
-
 /* Dropdown menus opened from the toolbar. */
-.doc-menu.el-dropdown-menu {
-  padding: 4px;
+.doc-menu {
+  --doc-popover-padding: 4px;
 }
 
-.doc-menu .el-dropdown-menu__item {
-  gap: 8px;
+.doc-menu__items {
+  display: grid;
   min-width: 168px;
+}
+
+.doc-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
   padding: 5px 12px 5px 8px;
+  border: 0;
   border-radius: 6px;
+  outline: none;
+  color: var(--nuvra-text);
+  background: transparent;
+  font: inherit;
   font-size: 13px;
   line-height: 20px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
-.doc-menu .el-dropdown-menu__item.is-selected {
-  color: var(--el-color-primary);
+.doc-menu__item:hover,
+.doc-menu__item:focus-visible {
+  color: var(--nuvra-color-primary);
+  background: var(--nuvra-color-primary-soft);
+}
+
+.doc-menu__item.is-selected {
+  color: var(--nuvra-color-primary);
   font-weight: 600;
+}
+
+.doc-menu__divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--nuvra-border-lighter);
 }
 
 /* Keyboard shortcut aligned to the right of a menu item. */
 .doc-menu__hint {
   margin-left: auto;
   padding-left: 20px;
-  color: var(--el-text-color-placeholder);
+  color: var(--nuvra-text-placeholder);
   font-size: 11px;
   font-weight: 400;
 }
@@ -122,28 +190,163 @@
   font-weight: 700;
 }
 
-/*
- * Bubble menus live in <body>. Each one receives a fresh inline z-index from Element Plus when it appears;
- * this value only applies until then.
- */
-.doc-bubble-host {
-  z-index: 2100;
+/* Text and number inputs of the editor's forms. */
+.doc-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  margin: 0;
+  padding: 0 7px;
+  border: 1px solid var(--nuvra-border);
+  border-radius: 4px;
+  outline: none;
+  color: var(--nuvra-text);
+  background: var(--nuvra-bg);
+  font: inherit;
+  font-size: 12px;
+  transition: border-color 120ms ease;
 }
 
-/*
- * A parent el-form-item in error state paints every input inside it red. The editor's own inputs (find bar) keep
- * Element Plus' normal borders; the extra `.document-editor` class outranks the error selectors in any load order.
- */
-.el-form-item.is-error .el-form-item__content .document-editor .el-input__wrapper {
-  box-shadow: 0 0 0 1px var(--el-input-border-color, var(--el-border-color)) inset;
+.doc-input::placeholder {
+  color: var(--nuvra-text-placeholder);
 }
 
-.el-form-item.is-error .el-form-item__content .document-editor .el-input__wrapper:hover {
-  box-shadow: 0 0 0 1px var(--el-input-hover-border-color) inset;
+.doc-input:hover {
+  border-color: var(--nuvra-border-hover);
 }
 
-.el-form-item.is-error .el-form-item__content .document-editor .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px var(--el-input-focus-border-color) inset;
+.doc-input:focus,
+.doc-input:focus-within {
+  border-color: var(--nuvra-color-primary);
+}
+
+/* Input with a trailing addition, such as the match counter; the class goes on a wrapper around the <input>. */
+.doc-input--affix {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.doc-input--affix input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+.doc-input--affix input::placeholder {
+  color: var(--nuvra-text-placeholder);
+}
+
+/* Small form buttons. */
+.doc-btn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  box-sizing: border-box;
+  height: 24px;
+  margin: 0;
+  padding: 0 11px;
+  border: 1px solid var(--nuvra-border);
+  border-radius: 4px;
+  color: var(--nuvra-text);
+  background: var(--nuvra-bg);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.doc-btn:hover:not(:disabled) {
+  border-color: var(--nuvra-color-primary-muted);
+  color: var(--nuvra-color-primary);
+  background: var(--nuvra-color-primary-soft);
+}
+
+.doc-btn:focus-visible {
+  outline: 2px solid var(--nuvra-color-primary-border);
+  outline-offset: 1px;
+}
+
+.doc-btn:disabled {
+  border-color: var(--nuvra-border-lighter);
+  color: var(--nuvra-text-placeholder);
+  cursor: not-allowed;
+}
+
+.doc-btn--primary {
+  border-color: var(--nuvra-color-primary);
+  color: var(--nuvra-color-on-primary);
+  background: var(--nuvra-color-primary);
+}
+
+.doc-btn--primary:hover:not(:disabled) {
+  border-color: var(--nuvra-color-primary-hover);
+  color: var(--nuvra-color-on-primary);
+  background: var(--nuvra-color-primary-hover);
+}
+
+.doc-btn--primary:disabled {
+  border-color: var(--nuvra-color-primary-border);
+  color: var(--nuvra-color-on-primary);
+  background: var(--nuvra-color-primary-border);
+}
+
+/* Borderless red action, such as removing a link. */
+.doc-btn--danger-text {
+  border-color: transparent;
+  color: var(--nuvra-color-danger);
+  background: transparent;
+}
+
+.doc-btn--danger-text:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--nuvra-color-danger);
+  background: var(--nuvra-color-danger-soft);
+}
+
+/* Checkbox with its label; the class goes on the <label> around the <input>. */
+.doc-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--nuvra-text);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.doc-checkbox input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--nuvra-color-primary);
+  cursor: pointer;
+}
+
+/* Spinning icon shown while work is in progress. */
+.doc-spin {
+  animation: doc-spin 1s linear infinite;
+}
+
+@keyframes doc-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Editable document: the engine sets the placeholder text inline; empty until then. */

@@ -5,8 +5,8 @@ import { defineConfig } from 'vite';
 
 import pkg from './package.json' with { type: 'json' };
 
-/** Packages the consuming app resolves itself; bundling them would duplicate Vue or Element Plus. */
-const EXTERNAL_PACKAGES = [...Object.keys(pkg.peerDependencies), ...Object.keys(pkg.dependencies)];
+/** Packages the consuming app resolves itself; bundling them would duplicate Vue. */
+const EXTERNAL_PACKAGES = Object.keys(pkg.peerDependencies);
 
 // https://vite.dev/guide/build#library-mode
 export default defineConfig({
@@ -19,7 +19,7 @@ export default defineConfig({
       cssFileName: 'style'
     },
     rolldownOptions: {
-      // Subpath imports such as `element-plus/es/...` stay external as well.
+      // Subpath imports such as `vue/...` stay external as well.
       external: id => EXTERNAL_PACKAGES.some(name => id === name || id.startsWith(`${name}/`))
     },
     sourcemap: true

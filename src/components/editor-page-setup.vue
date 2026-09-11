@@ -1,7 +1,4 @@
 <script setup lang="ts">
-import { RectangleHorizontal, RectangleVertical } from '@lucide/vue';
-import { ElInputNumber } from 'element-plus';
-
 import { t } from '../core/labels';
 import {
   MARGIN_PRESETS,
@@ -12,6 +9,7 @@ import {
   type PageSizeKey,
   isSameMargins
 } from '../core/page';
+import EditorIcon from './editor-icon.vue';
 
 /**
  * Page setup form shown in the toolbar popover: paper size, orientation, margin presets and exact margins.
@@ -36,8 +34,8 @@ const emit = defineEmits<Emits>();
 const SIZE_KEYS = Object.keys(PAGE_SIZES) as PageSizeKey[];
 /** Orientation options with their icons and label keys. */
 const ORIENTATIONS = [
-  { value: 'portrait', icon: RectangleVertical, label: 'editor.page.portrait' },
-  { value: 'landscape', icon: RectangleHorizontal, label: 'editor.page.landscape' }
+  { value: 'portrait', icon: 'rectangle-vertical', label: 'editor.page.portrait' },
+  { value: 'landscape', icon: 'rectangle-horizontal', label: 'editor.page.landscape' }
 ] as const;
 /** Exact margin inputs, one per page side. */
 const MARGIN_FIELDS = [
@@ -46,8 +44,9 @@ const MARGIN_FIELDS = [
   { side: 'left', label: 'editor.page.marginLeft' },
   { side: 'right', label: 'editor.page.marginRight' }
 ] as const;
-/** Limits of the exact margin inputs, in millimetres. */
+/** Limits of the exact margin inputs, in millimetres, and the number of decimals kept. */
 const MARGIN_INPUT = { min: 0, max: 100, step: 1, precision: 1 } as const;
+const MARGIN_ROUNDING = 10 ** MARGIN_INPUT.precision;
 
 /** Emits the current settings with `patch` applied. */
 const update = (patch: Partial<PageSettings>) => emit('change', { ...props.page, ...patch });
@@ -61,9 +60,20 @@ const setOrientation = (orientation: PageOrientation) => update({ orientation })
 /** Applies a margin preset; the preset object is copied so it can never be mutated. */
 const setMargins = (margins: PageMargins) => update({ margins: { ...margins } });
 
-/** Changes one margin; a cleared input counts as zero. */
-const setMargin = (side: keyof PageMargins, value: number | undefined) =>
-  update({ margins: { ...props.page.margins, [side]: value ?? 0 } });
+/** Keeps a typed margin within the input limits and rounds it; a cleared or invalid input counts as zero. */
+const normalizeMargin = (value: number) => {
+  if (!Number.isFinite(value)) return MARGIN_INPUT.min;
+  const clamped = Math.min(MARGIN_INPUT.max, Math.max(MARGIN_INPUT.min, value));
+  return Math.round(clamped * MARGIN_ROUNDING) / MARGIN_ROUNDING;
+};
+
+/** Applies a typed margin and shows the value that was actually applied. */
+const onMarginChange = (side: keyof PageMargins, event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const value = normalizeMargin(input.valueAsNumber);
+  input.value = String(value);
+  update({ margins: { ...props.page.margins, [side]: value } });
+};
 
 /** Tooltip listing the four margins of a preset in millimetres. */
 const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
@@ -107,7 +117,7 @@ const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
           :aria-pressed="page.orientation === orientation.value"
           @click="setOrientation(orientation.value)"
         >
-          <component :is="orientation.icon" :size="16" />
+          <EditorIcon :name="orientation.icon" :size="16" />
           {{ t(orientation.label) }}
         </button>
       </div>
@@ -132,15 +142,15 @@ const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
       <div class="page-setup__grid">
         <label v-for="field in MARGIN_FIELDS" :key="field.side" class="page-setup__field">
           <span>{{ t(field.label) }}</span>
-          <el-input-number
-            size="small"
-            controls-position="right"
-            :model-value="page.margins[field.side]"
+          <input
+            class="doc-input"
+            type="number"
+            inputmode="decimal"
             :min="MARGIN_INPUT.min"
             :max="MARGIN_INPUT.max"
             :step="MARGIN_INPUT.step"
-            :precision="MARGIN_INPUT.precision"
-            @change="value => setMargin(field.side, value)"
+            :value="page.margins[field.side]"
+            @change="onMarginChange(field.side, $event)"
           />
         </label>
       </div>
@@ -152,7 +162,7 @@ const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
 .page-setup {
   display: grid;
   gap: 12px;
-  color: var(--el-text-color-regular);
+  color: var(--nuvra-text);
 }
 
 .page-setup__section {
@@ -162,7 +172,7 @@ const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
 
 .page-setup__section h4 {
   margin: 0;
-  color: var(--el-text-color-primary);
+  color: var(--nuvra-text-strong);
   font-size: 12px;
   font-weight: 600;
 }
@@ -187,7 +197,7 @@ const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
   align-items: flex-start;
   gap: 1px;
   padding: 5px 8px;
-  border: 1px solid var(--el-border-color);
+  border: 1px solid var(--nuvra-border);
   border-radius: 6px;
   color: inherit;
   background: transparent;
@@ -198,13 +208,13 @@ const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
 }
 
 .page-setup__chip:hover {
-  border-color: var(--el-color-primary-light-5);
+  border-color: var(--nuvra-color-primary-border);
 }
 
 .page-setup__chip.is-active {
-  border-color: var(--el-color-primary);
-  color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
+  border-color: var(--nuvra-color-primary);
+  color: var(--nuvra-color-primary);
+  background: var(--nuvra-color-primary-soft);
 }
 
 .page-setup__chip--row {
@@ -214,7 +224,7 @@ const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
 }
 
 .page-setup__chip small {
-  color: var(--el-text-color-secondary);
+  color: var(--nuvra-text-muted);
   font-size: 10px;
   white-space: nowrap;
 }
@@ -222,18 +232,14 @@ const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
 /* Exact margin inputs. */
 .page-setup__caption {
   margin-top: 4px;
-  color: var(--el-text-color-secondary);
+  color: var(--nuvra-text-muted);
   font-size: 11px;
 }
 
 .page-setup__field {
   display: grid;
   gap: 3px;
-  color: var(--el-text-color-secondary);
+  color: var(--nuvra-text-muted);
   font-size: 11px;
-}
-
-.page-setup__field :deep(.el-input-number) {
-  width: 100%;
 }
 </style>

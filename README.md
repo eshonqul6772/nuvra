@@ -4,25 +4,25 @@ Word-style document editor for Vue 3. A real page view with paper sizes and marg
 forms, tables, images, lists, find & replace, HTML source mode, printing and export to HTML or Word (`.doc`).
 
 - No editor framework underneath: its own small editing engine with a sanitizing schema.
+- No UI framework either: native HTML controls, built-in SVG icons and plain CSS variables. Vue is the only
+  dependency.
 - Pagination in the page view (A4, A5, Letter, …, portrait or landscape).
 - Tables with merge / split, images with resize and alignment, task lists, links, colors, fonts.
 - Undo / redo, keyboard shortcuts that work with non-Latin keyboard layouts, Markdown-like input rules.
-- Built on [Element Plus](https://element-plus.org) controls and [Lucide](https://lucide.dev) icons.
 
 ## Installation
 
 ```sh
-pnpm add nuvra element-plus
+pnpm add nuvra
 # or
-npm install nuvra element-plus
+npm install nuvra
 ```
 
-`vue` (3.5+) and `element-plus` (2.9+) are peer dependencies.
+`vue` (3.5+) is the only peer dependency.
 
-Import the styles once, next to the Element Plus styles:
+Import the styles once, for example in `main.ts`:
 
 ```ts
-import 'element-plus/dist/index.css';
 import 'nuvra/style.css';
 ```
 
@@ -80,22 +80,22 @@ const uploadImage: DocumentImageUploadHandler = async file => {
 
 ### `DocumentEditor` props
 
-| Prop              | Type                                    | Default  | Description                                                              |
-| ----------------- | --------------------------------------- | -------- | ------------------------------------------------------------------------ |
-| `v-model`         | `string`                                | `''`     | Document HTML; an empty document is an empty string.                     |
-| `v-model:page`    | `PageSettings`                          | A4       | Paper size, orientation and margins.                                     |
-| `autofocus`       | `boolean`                               | `false`  | Places the caret at the end of the document once ready.                  |
-| `canvasPadding`   | `number \| string`                      | `50`     | Gray space around the page or web sheet.                                 |
-| `defaultViewMode` | `'page' \| 'web'`                       | `'page'` | View shown first.                                                        |
-| `disabled`        | `boolean`                               | `false`  | Read-only document, disabled controls.                                   |
-| `height`          | `number \| string`                      | `760`    | Height of the editor, or `'auto'` to grow between `minHeight`/`maxHeight`. |
-| `minHeight`       | `number \| string`                      | `240`    | Smallest height of an auto-height editor.                                |
-| `maxHeight`       | `number \| string`                      | `600`    | Largest height of an auto-height editor.                                 |
-| `maxImageSizeMb`  | `number`                                | `10`     | Largest accepted image file.                                             |
-| `maxLength`       | `number`                                | `0`      | Character limit; `0` means unlimited.                                    |
-| `placeholder`     | `string`                                | `''`     | Text shown while the document is empty.                                  |
-| `title`           | `string`                                | `''`     | Print title and exported file name.                                      |
-| `uploadImage`     | `(file: File) => Promise<string>`       | —        | Uploads an image and resolves with its URL.                              |
+| Prop              | Type                              | Default  | Description                                                                |
+| ----------------- | --------------------------------- | -------- | -------------------------------------------------------------------------- |
+| `v-model`         | `string`                          | `''`     | Document HTML; an empty document is an empty string.                       |
+| `v-model:page`    | `PageSettings`                    | A4       | Paper size, orientation and margins.                                       |
+| `autofocus`       | `boolean`                         | `false`  | Places the caret at the end of the document once ready.                    |
+| `canvasPadding`   | `number \| string`                | `50`     | Gray space around the page or web sheet.                                   |
+| `defaultViewMode` | `'page' \| 'web'`                 | `'page'` | View shown first.                                                          |
+| `disabled`        | `boolean`                         | `false`  | Read-only document, disabled controls.                                     |
+| `height`          | `number \| string`                | `760`    | Height of the editor, or `'auto'` to grow between `minHeight`/`maxHeight`. |
+| `minHeight`       | `number \| string`                | `240`    | Smallest height of an auto-height editor.                                  |
+| `maxHeight`       | `number \| string`                | `600`    | Largest height of an auto-height editor.                                   |
+| `maxImageSizeMb`  | `number`                          | `10`     | Largest accepted image file.                                               |
+| `maxLength`       | `number`                          | `0`      | Character limit; `0` means unlimited.                                      |
+| `placeholder`     | `string`                          | `''`     | Text shown while the document is empty.                                    |
+| `title`           | `string`                          | `''`     | Print title and exported file name.                                        |
+| `uploadImage`     | `(file: File) => Promise<string>` | —        | Uploads an image and resolves with its URL.                                |
 
 `Editor` accepts the same props except `v-model:page`, `defaultViewMode`, `height` and `title`.
 
@@ -103,22 +103,22 @@ Numbers are pixels; strings are used as CSS lengths (`'100%'`, `'50vh'`).
 
 ### Events
 
-| Event         | Payload          | Description                                   |
-| ------------- | ---------------- | --------------------------------------------- |
-| `focus`       | —                | The document received focus.                  |
+| Event         | Payload          | Description                                       |
+| ------------- | ---------------- | ------------------------------------------------- |
+| `focus`       | —                | The document received focus.                      |
 | `blur`        | —                | The document lost focus; the model is up to date. |
-| `uploadError` | `error: unknown` | An image was rejected or its upload failed.   |
+| `uploadError` | `error: unknown` | An image was rejected or its upload failed.       |
 
 ### Exposed methods (`DocumentEditor` ref)
 
-| Method         | Description                                                    |
-| -------------- | -------------------------------------------------------------- |
-| `focus()`      | Moves keyboard focus into the document.                        |
+| Method         | Description                                                      |
+| -------------- | ---------------------------------------------------------------- |
+| `focus()`      | Moves keyboard focus into the document.                          |
 | `getHTML()`    | Returns the document HTML, including edits not yet in the model. |
-| `print()`      | Opens the browser print dialog.                                |
-| `exportHtml()` | Downloads the document as an HTML page.                        |
-| `exportWord()` | Downloads the document as a Word-compatible `.doc` file.       |
-| `engine`       | The editing engine, for advanced integrations.                 |
+| `print()`      | Opens the browser print dialog.                                  |
+| `exportHtml()` | Downloads the document as an HTML page.                          |
+| `exportWord()` | Downloads the document as a Word-compatible `.doc` file.         |
+| `engine`       | The editing engine, for advanced integrations.                   |
 
 ### Keyboard shortcuts
 
@@ -155,9 +155,63 @@ setEditorTranslator((key, named) => (i18n.global.te(key) ? i18n.global.t(key, na
 
 ## Theming
 
-The editor uses Element Plus CSS variables (`--el-color-primary`, `--el-border-color`, `--el-bg-color`, …), so it
-follows your Element Plus theme and dark mode.
+Colors come from CSS variables declared on `.document-editor`. Override any of them there, or on an ancestor:
+
+```css
+.document-editor {
+  --nuvra-color-primary: #7c3aed;
+  --nuvra-color-primary-hover: #8b5cf6;
+  --nuvra-color-primary-border: #c4b5fd;
+  --nuvra-color-primary-muted: #ddd6fe;
+  --nuvra-color-primary-soft: #f5f3ff;
+}
+```
+
+| Variable                        | Used for                                             |
+| ------------------------------- | ---------------------------------------------------- |
+| `--nuvra-color-primary`         | Active buttons, focus, primary buttons, selection    |
+| `--nuvra-color-primary-hover`   | Hovered primary buttons                              |
+| `--nuvra-color-primary-border`  | Focused editor frame, disabled primary buttons       |
+| `--nuvra-color-primary-muted`   | Table size preview, hovered button borders           |
+| `--nuvra-color-primary-soft`    | Active button and menu item backgrounds              |
+| `--nuvra-color-on-primary`      | Text on primary buttons                              |
+| `--nuvra-color-danger`          | Destructive actions, character limit reached         |
+| `--nuvra-color-danger-soft`     | Hovered destructive actions                          |
+| `--nuvra-text-strong`           | Headings in forms                                    |
+| `--nuvra-text`                  | Regular text and icons                               |
+| `--nuvra-text-muted`            | Labels, captions, status bar                         |
+| `--nuvra-text-placeholder`      | Placeholders, shortcut hints                         |
+| `--nuvra-text-disabled`         | Disabled buttons                                     |
+| `--nuvra-border`                | Editor frame, inputs                                 |
+| `--nuvra-border-hover`          | Hovered inputs                                       |
+| `--nuvra-border-light`          | Popovers and floating panels                         |
+| `--nuvra-border-lighter`        | Dividers                                             |
+| `--nuvra-fill`                  | Hovered buttons, segmented controls                  |
+| `--nuvra-bg`                    | Toolbar, status bar, inputs                          |
+| `--nuvra-bg-overlay`            | Popovers, menus, find bar                            |
+| `--nuvra-shadow`                | Popovers and floating panels                         |
+| `--nuvra-fullscreen-z-index`    | Stacking order of the fullscreen editor (`2000`)     |
+
+A dark palette is applied when an ancestor (usually `<html>`) has the `dark` class or `data-theme="dark"`.
+
+To follow an Element Plus theme, map the variables to its own:
+
+```css
+.document-editor {
+  --nuvra-color-primary: var(--el-color-primary);
+  --nuvra-color-primary-soft: var(--el-color-primary-light-9);
+  --nuvra-text: var(--el-text-color-regular);
+  --nuvra-border: var(--el-border-color);
+  --nuvra-bg: var(--el-bg-color);
+}
+```
+
+## Browser support
+
+Popovers, menus and bubble toolbars use the [Popover API](https://developer.mozilla.org/docs/Web/API/Popover_API)
+(Chrome/Edge 114+, Safari 17+, Firefox 125+), which keeps them above dialogs and the fullscreen editor. Older browsers
+show them as fixed elements instead. Search highlighting uses the CSS Custom Highlight API.
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](./LICENSE). Icon shapes come from [Lucide](https://lucide.dev) (ISC).

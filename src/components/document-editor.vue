@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
-import { useZIndex } from 'element-plus';
 
 import { DocumentEngine } from '../core/engine/engine';
 import { t } from '../core/labels';
@@ -118,8 +117,6 @@ const findBarRef = ref<InstanceType<typeof EditorFindBar>>();
 const engine = shallowRef<DocumentEngine | null>(null);
 /** Where the editor is teleported in fullscreen: the surrounding dialog or drawer, otherwise `body`. */
 const fullscreenTarget = shallowRef<HTMLElement | 'body'>('body');
-/** Stacking order taken from Element Plus when fullscreen starts. */
-const fullscreenZIndex = ref<number>();
 const viewMode = ref<DocumentViewMode>(props.defaultViewMode);
 /** Zoom in percent. */
 const zoom = ref(ACTUAL_SIZE_ZOOM);
@@ -139,8 +136,6 @@ const currentPage = ref(1);
 /** Toolbar snapshot; replaced only when a visible value changes, so the toolbar does not re-render per keystroke. */
 const uiState = shallowRef<EditorUiState>(EMPTY_UI_STATE);
 const stats = shallowRef({ words: 0, characters: 0 });
-
-const { nextZIndex } = useZIndex();
 
 let pagination: PaginationController | null = null;
 /** Last HTML written to the model, used to ignore the model echo of our own updates. */
@@ -164,13 +159,12 @@ const metrics = computed(() => getPageMetrics(page.value));
 const canvasScroll = computed(() => canvasRef.value?.scrollElement);
 /** Auto height applies only outside fullscreen, where the editor always fills the viewport. */
 const autoHeight = computed(() => props.height === 'auto' && !fullscreen.value);
-/** CSS variables shared with the canvas, plus the fullscreen stacking order. */
+/** CSS variables shared with the canvas. */
 const rootStyle = computed(() => ({
   '--doc-editor-canvas-padding': toCssSize(props.canvasPadding),
   '--doc-editor-height': toCssSize(props.height),
   '--doc-editor-min-height': toCssSize(props.minHeight),
-  '--doc-editor-max-height': toCssSize(props.maxHeight),
-  zIndex: fullscreen.value ? fullscreenZIndex.value : undefined
+  '--doc-editor-max-height': toCssSize(props.maxHeight)
 }));
 
 /** Recounts words and characters for the status bar. */
@@ -438,13 +432,11 @@ watch([pageCount, zoom, viewMode], scheduleUiSync);
 /** Paper or view changes can make the page too wide for the canvas again. */
 watch([metrics, viewMode], applyAutoZoom);
 
-/** Enters or leaves fullscreen: picks the teleport target and stacking order, and locks page scrolling. */
+/** Enters or leaves fullscreen: picks the teleport target and locks page scrolling. */
 watch(fullscreen, value => {
   if (value) {
-    // Inside a dialog or drawer, the editor stays in it, so Element Plus' focus trap keeps allowing input.
-    fullscreenTarget.value = sectionRef.value?.closest<HTMLElement>('.el-dialog, .el-drawer') ?? 'body';
-    // Element Plus' own counter puts the editor above open modals and below poppers opened from it.
-    fullscreenZIndex.value = nextZIndex();
+    // Inside a dialog or drawer, the editor stays in it, so the dialog's focus trap keeps allowing input.
+    fullscreenTarget.value = sectionRef.value?.closest<HTMLElement>('dialog, [role="dialog"]') ?? 'body';
     previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
   } else {
@@ -622,15 +614,15 @@ defineExpose({
   min-height: 360px;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--el-border-color);
+  border: 1px solid var(--nuvra-border);
   border-radius: 10px;
-  background: var(--el-bg-color);
+  background: var(--nuvra-bg);
   container-type: inline-size;
   transition: border-color 160ms ease;
 }
 
 .document-editor:focus-within {
-  border-color: var(--el-color-primary-light-5);
+  border-color: var(--nuvra-color-primary-border);
 }
 
 .document-editor.is-auto-height {
@@ -638,9 +630,10 @@ defineExpose({
   min-height: 0;
 }
 
-/* The stacking order comes from Element Plus at runtime (inline z-index). */
+/* Fullscreen covers the viewport; --nuvra-fullscreen-z-index sets its stacking order. */
 .document-editor.is-fullscreen {
   position: fixed;
+  z-index: var(--nuvra-fullscreen-z-index);
   inset: 0;
   height: 100dvh;
   border: 0;

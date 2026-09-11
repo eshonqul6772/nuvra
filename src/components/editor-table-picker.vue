@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { type CheckboxValueType, ElCheckbox } from 'element-plus';
 
 import { t } from '../core/labels';
 
@@ -62,11 +61,6 @@ const clearPreview = () => {
 
 /** Whether a cell lies inside the previewed table. */
 const isInPreview = (row: number, col: number) => row <= preview.value.rows && col <= preview.value.cols;
-
-/** Stores the header row checkbox state; the checkbox reports `true` when checked. */
-const onHeaderRowChange = (value: CheckboxValueType) => {
-  withHeaderRow.value = value === true;
-};
 </script>
 
 <template>
@@ -87,9 +81,10 @@ const onHeaderRowChange = (value: CheckboxValueType) => {
       </template>
     </div>
     <strong class="table-picker__size">{{ sizeLabel }}</strong>
-    <el-checkbox size="small" :model-value="withHeaderRow" @change="onHeaderRowChange">
+    <label class="doc-checkbox">
+      <input v-model="withHeaderRow" type="checkbox" />
       {{ t('editor.table.headerRow') }}
-    </el-checkbox>
+    </label>
   </div>
 </template>
 
@@ -110,20 +105,20 @@ const onHeaderRowChange = (value: CheckboxValueType) => {
   width: 16px;
   height: 16px;
   padding: 0;
-  border: 1px solid var(--el-border-color);
+  border: 1px solid var(--nuvra-border);
   border-radius: 2px;
-  background: var(--el-bg-color);
+  background: var(--nuvra-bg);
   cursor: pointer;
 }
 
 /* Cells inside the previewed table. */
 .table-picker__cell.is-active {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-8);
+  border-color: var(--nuvra-color-primary);
+  background: var(--nuvra-color-primary-muted);
 }
 
 .table-picker__size {
-  color: var(--el-text-color-regular);
+  color: var(--nuvra-text);
   font-size: 12px;
   text-align: center;
 }

@@ -1,33 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
-import {
-  BetweenHorizontalEnd,
-  BetweenHorizontalStart,
-  BetweenVerticalEnd,
-  BetweenVerticalStart,
-  Columns2,
-  ExternalLink,
-  Grid2x2X,
-  PanelTop,
-  Pencil,
-  Rows2,
-  TableCellsMerge,
-  TableCellsSplit,
-  TextAlignCenter,
-  TextAlignEnd,
-  TextAlignStart,
-  TextCursorInput,
-  Trash2,
-  Unlink
-} from '@lucide/vue';
-import { ElButton, ElInput, type InputInstance, useZIndex } from 'element-plus';
 
 import type { DocumentEngine, TableCommand } from '../core/engine/engine';
 import { t } from '../core/labels';
+import { SUPPORTS_POPOVER } from '../core/popover';
+import EditorIcon from './editor-icon.vue';
 
 /**
  * Floating context toolbars: link actions under a link, image alignment and alt text above a selected image, and
- * row/column/cell actions above the active table. Rendered in `body` and positioned against the canvas viewport.
+ * row/column/cell actions above the active table. Shown in the top layer and positioned against the canvas viewport.
  */
 defineOptions({ name: 'EditorBubbleMenus' });
 
@@ -60,29 +41,29 @@ interface ResolvedMenu {
 }
 
 const IMAGE_ALIGNMENTS = [
-  { value: 'left', icon: TextAlignStart, label: 'editor.align.left' },
-  { value: 'center', icon: TextAlignCenter, label: 'editor.align.center' },
-  { value: 'right', icon: TextAlignEnd, label: 'editor.align.right' }
+  { value: 'left', icon: 'text-align-start', label: 'editor.align.left' },
+  { value: 'center', icon: 'text-align-center', label: 'editor.align.center' },
+  { value: 'right', icon: 'text-align-end', label: 'editor.align.right' }
 ] as const;
 
 /** Table actions in visual groups; `danger` actions are highlighted in red on hover. */
 const TABLE_GROUPS = [
   [
-    { command: 'addRowBefore', icon: BetweenHorizontalStart, label: 'editor.table.addRowBefore' },
-    { command: 'addRowAfter', icon: BetweenHorizontalEnd, label: 'editor.table.addRowAfter' },
-    { command: 'deleteRow', icon: Rows2, label: 'editor.table.deleteRow', danger: true }
+    { command: 'addRowBefore', icon: 'between-horizontal-start', label: 'editor.table.addRowBefore' },
+    { command: 'addRowAfter', icon: 'between-horizontal-end', label: 'editor.table.addRowAfter' },
+    { command: 'deleteRow', icon: 'rows-2', label: 'editor.table.deleteRow', danger: true }
   ],
   [
-    { command: 'addColumnBefore', icon: BetweenVerticalStart, label: 'editor.table.addColumnBefore' },
-    { command: 'addColumnAfter', icon: BetweenVerticalEnd, label: 'editor.table.addColumnAfter' },
-    { command: 'deleteColumn', icon: Columns2, label: 'editor.table.deleteColumn', danger: true }
+    { command: 'addColumnBefore', icon: 'between-vertical-start', label: 'editor.table.addColumnBefore' },
+    { command: 'addColumnAfter', icon: 'between-vertical-end', label: 'editor.table.addColumnAfter' },
+    { command: 'deleteColumn', icon: 'columns-2', label: 'editor.table.deleteColumn', danger: true }
   ],
   [
-    { command: 'mergeCells', icon: TableCellsMerge, label: 'editor.table.mergeCells' },
-    { command: 'splitCell', icon: TableCellsSplit, label: 'editor.table.splitCell' },
-    { command: 'toggleHeaderRow', icon: PanelTop, label: 'editor.table.headerRow' }
+    { command: 'mergeCells', icon: 'table-cells-merge', label: 'editor.table.mergeCells' },
+    { command: 'splitCell', icon: 'table-cells-split', label: 'editor.table.splitCell' },
+    { command: 'toggleHeaderRow', icon: 'panel-top', label: 'editor.table.headerRow' }
   ],
-  [{ command: 'deleteTable', icon: Grid2x2X, label: 'editor.table.delete', danger: true }]
+  [{ command: 'deleteTable', icon: 'grid-2x2-x', label: 'editor.table.delete', danger: true }]
 ] as const;
 
 /** Distance between a menu and its reference or the canvas edges, in pixels. */
@@ -95,7 +76,7 @@ const position = ref({ left: 0, top: 0 });
 /** Whether the reference has scrolled out of the canvas. */
 const hidden = ref(false);
 const menuRef = ref<HTMLElement>();
-const altInput = ref<InputInstance>();
+const altInput = ref<HTMLInputElement>();
 const linkHref = ref('');
 const imageAlign = ref<ImageAlign>('center');
 const imageAlt = ref('');
@@ -103,10 +84,6 @@ const imageAlt = ref('');
 const altEditing = ref(false);
 const canMerge = ref(false);
 const canSplit = ref(false);
-/** Stacking order taken from Element Plus whenever a menu appears. */
-const zIndex = ref<number>();
-
-const { nextZIndex } = useZIndex();
 
 /** The menu currently shown with its reference element. */
 let current: ResolvedMenu | null = null;
@@ -144,6 +121,9 @@ const positionMenu = () => {
   const menu = menuRef.value;
   const reference = current?.reference;
   if (!menu || !reference?.isConnected) return;
+  // The top layer keeps the menu above dialogs and the fullscreen editor; moving the editor DOM leaves it, so it is
+  // shown again here.
+  if (SUPPORTS_POPOVER && !menu.matches(':popover-open')) menu.showPopover();
   const anchor = reference.getBoundingClientRect();
   const bounds = props.scrollTarget.getBoundingClientRect();
   hidden.value = anchor.bottom < bounds.top || anchor.top > bounds.bottom;
@@ -186,8 +166,6 @@ const update = () => {
   const resolved = resolveMenu();
   current = resolved;
   if (resolved?.kind !== 'image') altEditing.value = false;
-  // A fresh layer whenever a menu appears keeps it above dialogs and the fullscreen editor.
-  if (resolved && !kind.value) zIndex.value = nextZIndex();
   kind.value = resolved?.kind ?? null;
   if (!resolved) return;
   refreshValues(resolved);
@@ -267,127 +245,133 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div
-      v-if="kind"
-      ref="menuRef"
-      class="doc-bubble-host doc-bubble"
-      role="toolbar"
-      :class="{ 'is-hidden': hidden }"
-      :aria-label="menuLabel"
-      :style="{ left: `${position.left}px`, top: `${position.top}px`, zIndex }"
-    >
-      <template v-if="kind === 'link'">
-        <a class="doc-bubble__link" target="_blank" rel="noopener noreferrer" :href="linkHref" :title="linkHref">
-          <ExternalLink :size="13" />
-          <span>{{ linkHref }}</span>
-        </a>
+  <div
+    v-if="kind"
+    ref="menuRef"
+    class="doc-bubble"
+    popover="manual"
+    role="toolbar"
+    :class="{ 'is-hidden': hidden }"
+    :aria-label="menuLabel"
+    :style="{ left: `${position.left}px`, top: `${position.top}px` }"
+  >
+    <template v-if="kind === 'link'">
+      <a class="doc-bubble__link" target="_blank" rel="noopener noreferrer" :href="linkHref" :title="linkHref">
+        <EditorIcon name="external-link" :size="13" />
+        <span>{{ linkHref }}</span>
+      </a>
+      <span class="doc-bubble__divider" />
+      <button
+        type="button"
+        class="doc-tb-button"
+        :aria-label="t('editor.editLink')"
+        :title="t('editor.editLink')"
+        @mousedown.prevent
+        @click="emit('editLink')"
+      >
+        <EditorIcon name="pencil" :size="15" />
+      </button>
+      <button
+        type="button"
+        class="doc-tb-button"
+        :aria-label="t('editor.unlink')"
+        :title="t('editor.unlink')"
+        @mousedown.prevent
+        @click="engine.unsetLink()"
+      >
+        <EditorIcon name="unlink" :size="15" />
+      </button>
+    </template>
+
+    <template v-else-if="kind === 'image'">
+      <form v-if="altEditing" class="doc-bubble__form" @submit.prevent="saveAlt">
+        <input
+          ref="altInput"
+          v-model="imageAlt"
+          class="doc-input"
+          type="text"
+          :aria-label="t('editor.imageAlt')"
+          :placeholder="t('editor.imageAlt')"
+        />
+        <button type="submit" class="doc-btn doc-btn--primary">{{ t('editor.apply') }}</button>
+      </form>
+      <template v-else>
+        <button
+          v-for="alignment in IMAGE_ALIGNMENTS"
+          :key="alignment.value"
+          type="button"
+          class="doc-tb-button"
+          :class="{ 'is-active': imageAlign === alignment.value }"
+          :aria-label="t(alignment.label)"
+          :title="t(alignment.label)"
+          @mousedown.prevent
+          @click="setImageAlign(alignment.value)"
+        >
+          <EditorIcon :name="alignment.icon" :size="15" />
+        </button>
         <span class="doc-bubble__divider" />
         <button
           type="button"
           class="doc-tb-button"
-          :aria-label="t('editor.editLink')"
-          :title="t('editor.editLink')"
+          :aria-label="t('editor.imageAlt')"
+          :title="t('editor.imageAlt')"
           @mousedown.prevent
-          @click="emit('editLink')"
+          @click="startAltEditing"
         >
-          <Pencil :size="15" />
+          <EditorIcon name="text-cursor-input" :size="15" />
         </button>
         <button
           type="button"
-          class="doc-tb-button"
-          :aria-label="t('editor.unlink')"
-          :title="t('editor.unlink')"
+          class="doc-tb-button is-danger"
+          :aria-label="t('editor.delete')"
+          :title="t('editor.delete')"
           @mousedown.prevent
-          @click="engine.unsetLink()"
+          @click="removeImage"
         >
-          <Unlink :size="15" />
+          <EditorIcon name="trash" :size="15" />
         </button>
       </template>
+    </template>
 
-      <template v-else-if="kind === 'image'">
-        <form v-if="altEditing" class="doc-bubble__form" @submit.prevent="saveAlt">
-          <el-input
-            ref="altInput"
-            v-model="imageAlt"
-            size="small"
-            :ariaLabel="t('editor.imageAlt')"
-            :placeholder="t('editor.imageAlt')"
-          />
-          <el-button native-type="submit" size="small" type="primary">{{ t('editor.apply') }}</el-button>
-        </form>
-        <template v-else>
-          <button
-            v-for="alignment in IMAGE_ALIGNMENTS"
-            :key="alignment.value"
-            type="button"
-            class="doc-tb-button"
-            :class="{ 'is-active': imageAlign === alignment.value }"
-            :aria-label="t(alignment.label)"
-            :title="t(alignment.label)"
-            @mousedown.prevent
-            @click="setImageAlign(alignment.value)"
-          >
-            <component :is="alignment.icon" :size="15" />
-          </button>
-          <span class="doc-bubble__divider" />
-          <button
-            type="button"
-            class="doc-tb-button"
-            :aria-label="t('editor.imageAlt')"
-            :title="t('editor.imageAlt')"
-            @mousedown.prevent
-            @click="startAltEditing"
-          >
-            <TextCursorInput :size="15" />
-          </button>
-          <button
-            type="button"
-            class="doc-tb-button is-danger"
-            :aria-label="t('editor.delete')"
-            :title="t('editor.delete')"
-            @mousedown.prevent
-            @click="removeImage"
-          >
-            <Trash2 :size="15" />
-          </button>
-        </template>
+    <template v-else>
+      <template v-for="(group, index) in TABLE_GROUPS" :key="index">
+        <span v-if="index" class="doc-bubble__divider" />
+        <button
+          v-for="action in group"
+          :key="action.command"
+          type="button"
+          class="doc-tb-button"
+          :class="{ 'is-danger': 'danger' in action }"
+          :aria-label="t(action.label)"
+          :disabled="isTableCommandDisabled(action.command)"
+          :title="t(action.label)"
+          @mousedown.prevent
+          @click="runTableCommand(action.command)"
+        >
+          <EditorIcon :name="action.icon" :size="15" />
+        </button>
       </template>
-
-      <template v-else>
-        <template v-for="(group, index) in TABLE_GROUPS" :key="index">
-          <span v-if="index" class="doc-bubble__divider" />
-          <button
-            v-for="action in group"
-            :key="action.command"
-            type="button"
-            class="doc-tb-button"
-            :class="{ 'is-danger': 'danger' in action }"
-            :aria-label="t(action.label)"
-            :disabled="isTableCommandDisabled(action.command)"
-            :title="t(action.label)"
-            @mousedown.prevent
-            @click="runTableCommand(action.command)"
-          >
-            <component :is="action.icon" :size="15" />
-          </button>
-        </template>
-      </template>
-    </div>
-  </Teleport>
+    </template>
+  </div>
 </template>
 
 <style scoped>
-/* Menu surface */
+/* Menu surface: in the top layer when the Popover API is available, a fixed element above the page otherwise. */
 .doc-bubble {
   position: fixed;
+  z-index: 2100;
+  inset: auto;
   display: flex;
+  box-sizing: border-box;
   align-items: center;
   gap: 1px;
+  margin: 0;
   padding: 3px;
-  border: 1px solid var(--el-border-color-light);
+  overflow: visible;
+  border: 1px solid var(--nuvra-border-light);
   border-radius: 8px;
-  background: var(--el-bg-color-overlay);
+  color: var(--nuvra-text);
+  background: var(--nuvra-bg-overlay);
   box-shadow: 0 6px 20px rgb(16 24 40 / 16%);
 }
 
@@ -399,12 +383,12 @@ onBeforeUnmount(() => {
   flex: 0 0 1px;
   align-self: stretch;
   margin: 3px 4px;
-  background: var(--el-border-color-lighter);
+  background: var(--nuvra-border-lighter);
 }
 
 .doc-bubble .doc-tb-button.is-danger:hover:not(:disabled) {
-  color: var(--el-color-danger);
-  background: var(--el-color-danger-light-9);
+  color: var(--nuvra-color-danger);
+  background: var(--nuvra-color-danger-soft);
 }
 
 /* Link menu */
@@ -414,7 +398,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   padding: 0 6px;
-  color: var(--el-color-primary);
+  color: var(--nuvra-color-primary);
   font-size: 12px;
   text-decoration: none;
 }

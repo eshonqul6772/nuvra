@@ -1,72 +1,20 @@
 <script setup lang="ts">
-import { type Component, computed, ref } from 'vue';
-import {
-  Bold,
-  CalendarDays,
-  ChevronDown,
-  Code,
-  Ellipsis,
-  FileCode,
-  FileDown,
-  FileSliders,
-  FileType,
-  Grid3x3,
-  ImagePlus,
-  Italic,
-  Languages,
-  Link,
-  List,
-  ListIndentDecrease,
-  ListIndentIncrease,
-  ListOrdered,
-  ListTodo,
-  Maximize2,
-  Minimize2,
-  Omega,
-  PilcrowLeft,
-  PilcrowRight,
-  Plus,
-  Printer,
-  Quote,
-  Redo2,
-  RemoveFormatting,
-  Search,
-  SeparatorHorizontal,
-  SquareCode,
-  SquareSplitVertical,
-  Strikethrough,
-  Subscript,
-  Superscript,
-  TextAlignCenter,
-  TextAlignEnd,
-  TextAlignJustify,
-  TextAlignStart,
-  Underline,
-  Undo2,
-  UnfoldVertical,
-  Upload
-} from '@lucide/vue';
-import {
-  type CheckboxValueType,
-  ElButton,
-  ElCheckbox,
-  ElDropdown,
-  ElDropdownItem,
-  ElDropdownMenu,
-  ElInput,
-  ElPopover,
-  type InputInstance
-} from 'element-plus';
+import { computed, ref } from 'vue';
 
 import type { HeadingTag, TextAlign, TextDirection } from '../core/engine/blocks';
 import type { DocumentEngine } from '../core/engine/engine';
 import type { MarkName } from '../core/engine/marks';
+import type { IconName } from '../core/icons';
 import { type EditorLabelKey, formatShortcut, t, withShortcut } from '../core/labels';
 import type { PageSettings } from '../core/page';
 import type { DocumentMenuAction } from '../core/types';
 import { type EditorUiState, normalizeFontFamily } from '../core/ui-state';
 import EditorColorPicker from './editor-color-picker.vue';
+import EditorDropdown from './editor-dropdown.vue';
+import EditorDropdownItem from './editor-dropdown-item.vue';
+import EditorIcon from './editor-icon.vue';
 import EditorPageSetup from './editor-page-setup.vue';
+import EditorPopover from './editor-popover.vue';
 import EditorTablePicker from './editor-table-picker.vue';
 
 /**
@@ -118,7 +66,7 @@ type BooleanStateKey = {
 interface ToggleButton {
   /** State flag that marks the button as active. */
   key: BooleanStateKey;
-  icon: Component;
+  icon: IconName;
   label: EditorLabelKey;
   /** Shortcut shown in the tooltip, written with `Mod` for Ctrl/⌘. */
   shortcut: string;
@@ -141,6 +89,8 @@ const DEFAULT_FONT = 'Times New Roman';
 const DEFAULT_FONT_SIZE = 12;
 /** Points per CSS pixel. */
 const POINTS_PER_PIXEL = 0.75;
+/** Largest height of the long font menus, in pixels. */
+const LONG_MENU_HEIGHT = 320;
 
 const FONT_FAMILIES = [
   { label: 'Times New Roman', value: "'Times New Roman', Times, serif" },
@@ -160,30 +110,30 @@ const LINE_HEIGHTS = ['1', '1.15', '1.5', '2', '2.5', '3'];
 const HEADING_LEVELS = 4;
 
 const ALIGNMENTS = [
-  { value: 'left', icon: TextAlignStart, label: 'editor.align.left', shortcut: 'Mod+Shift+L' },
-  { value: 'center', icon: TextAlignCenter, label: 'editor.align.center', shortcut: 'Mod+Shift+E' },
-  { value: 'right', icon: TextAlignEnd, label: 'editor.align.right', shortcut: 'Mod+Shift+R' },
-  { value: 'justify', icon: TextAlignJustify, label: 'editor.align.justify', shortcut: 'Mod+Shift+J' }
+  { value: 'left', icon: 'text-align-start', label: 'editor.align.left', shortcut: 'Mod+Shift+L' },
+  { value: 'center', icon: 'text-align-center', label: 'editor.align.center', shortcut: 'Mod+Shift+E' },
+  { value: 'right', icon: 'text-align-end', label: 'editor.align.right', shortcut: 'Mod+Shift+R' },
+  { value: 'justify', icon: 'text-align-justify', label: 'editor.align.justify', shortcut: 'Mod+Shift+J' }
 ] as const;
 
 const DIRECTIONS = [
-  { value: 'auto', icon: Languages, label: 'editor.direction.auto' },
-  { value: 'ltr', icon: PilcrowRight, label: 'editor.direction.ltr' },
-  { value: 'rtl', icon: PilcrowLeft, label: 'editor.direction.rtl' }
+  { value: 'auto', icon: 'languages', label: 'editor.direction.auto' },
+  { value: 'ltr', icon: 'pilcrow-right', label: 'editor.direction.ltr' },
+  { value: 'rtl', icon: 'pilcrow-left', label: 'editor.direction.rtl' }
 ] as const;
 
 const MARK_BUTTONS: ToggleButton[] = [
-  { key: 'bold', icon: Bold, label: 'editor.bold', shortcut: 'Mod+B', toggle: engine => engine.toggleMark('bold') },
+  { key: 'bold', icon: 'bold', label: 'editor.bold', shortcut: 'Mod+B', toggle: engine => engine.toggleMark('bold') },
   {
     key: 'italic',
-    icon: Italic,
+    icon: 'italic',
     label: 'editor.italic',
     shortcut: 'Mod+I',
     toggle: engine => engine.toggleMark('italic')
   },
   {
     key: 'underline',
-    icon: Underline,
+    icon: 'underline',
     label: 'editor.underline',
     shortcut: 'Mod+U',
     toggle: engine => engine.toggleMark('underline')
@@ -193,21 +143,21 @@ const MARK_BUTTONS: ToggleButton[] = [
 const LIST_BUTTONS: ToggleButton[] = [
   {
     key: 'bulletList',
-    icon: List,
+    icon: 'list',
     label: 'editor.bulletList',
     shortcut: 'Mod+Shift+8',
     toggle: engine => engine.toggleList('bulletList')
   },
   {
     key: 'orderedList',
-    icon: ListOrdered,
+    icon: 'list-ordered',
     label: 'editor.orderedList',
     shortcut: 'Mod+Shift+7',
     toggle: engine => engine.toggleList('orderedList')
   },
   {
     key: 'taskList',
-    icon: ListTodo,
+    icon: 'list-todo',
     label: 'editor.taskList',
     shortcut: 'Mod+Shift+9',
     toggle: engine => engine.toggleList('taskList')
@@ -231,7 +181,7 @@ const IMAGE_URL = /^(https?:\/\/|\/)/i;
 
 /** Whether the link popover is open. */
 const linkVisible = ref(false);
-const linkInput = ref<InputInstance>();
+const linkInput = ref<HTMLInputElement>();
 const linkUrl = ref('');
 /** Text for a new link inserted at a collapsed caret. */
 const linkText = ref('');
@@ -275,13 +225,13 @@ const fontSizeLabel = computed(() => {
 });
 
 /** Icon of the alignment at the caret. */
-const alignIcon = computed(
-  () => ALIGNMENTS.find(alignment => alignment.value === props.state.align)?.icon ?? TextAlignStart
+const alignIcon = computed<IconName>(
+  () => ALIGNMENTS.find(alignment => alignment.value === props.state.align)?.icon ?? 'text-align-start'
 );
 
 /** Icon of the text direction at the caret. */
-const directionIcon = computed(
-  () => DIRECTIONS.find(direction => direction.value === props.state.direction)?.icon ?? Languages
+const directionIcon = computed<IconName>(
+  () => DIRECTIONS.find(direction => direction.value === props.state.direction)?.icon ?? 'languages'
 );
 
 /** Applies a choice from the text style menu: paragraph, heading level, quote or code block. */
@@ -377,11 +327,6 @@ const normalizeUrl = (value: string) => {
   return `https://${url}`;
 };
 
-/** Mirrors the "open in new tab" checkbox into the form state. */
-const onLinkNewTabChange = (value: CheckboxValueType) => {
-  linkNewTab.value = Boolean(value);
-};
-
 /** Removes the link under the caret and closes the form. */
 const removeLink = () => {
   linkVisible.value = false;
@@ -453,7 +398,7 @@ defineExpose({
         @mousedown.prevent
         @click="engine.undo()"
       >
-        <Undo2 :size="16" />
+        <EditorIcon name="undo-2" :size="16" />
       </button>
       <button
         type="button"
@@ -464,14 +409,14 @@ defineExpose({
         @mousedown.prevent
         @click="engine.redo()"
       >
-        <Redo2 :size="16" />
+        <EditorIcon name="redo-2" :size="16" />
       </button>
     </div>
 
     <span class="doc-toolbar__divider" />
 
     <div class="doc-toolbar__group">
-      <el-dropdown popper-class="doc-editor-popper" trigger="click" :disabled="locked" @command="setBlock">
+      <EditorDropdown :disabled="locked" @command="setBlock">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select doc-toolbar__block"
@@ -480,45 +425,37 @@ defineExpose({
           @mousedown.prevent
         >
           <span class="doc-tb-button__label">{{ blockLabel }}</span>
-          <ChevronDown :size="12" />
+          <EditorIcon name="chevron-down" :size="12" />
         </button>
-        <template #dropdown>
-          <el-dropdown-menu class="doc-menu">
-            <el-dropdown-item
-              command="paragraph"
-              :class="{ 'is-selected': !state.headingLevel && !state.codeBlock && !state.blockquote }"
-            >
-              {{ t('editor.paragraph') }}
-              <span class="doc-menu__hint">{{ formatShortcut('Mod+Alt+0') }}</span>
-            </el-dropdown-item>
-            <el-dropdown-item
-              v-for="level in HEADING_LEVELS"
-              :key="level"
-              :class="{ 'is-selected': state.headingLevel === level }"
-              :command="level"
-            >
-              <span :class="`doc-menu__h${level}`">{{ t('editor.heading', { level }) }}</span>
-              <span class="doc-menu__hint">{{ formatShortcut(`Mod+Alt+${level}`) }}</span>
-            </el-dropdown-item>
-            <el-dropdown-item command="blockquote" divided :class="{ 'is-selected': state.blockquote }">
-              <Quote :size="14" />
-              {{ t('editor.quote') }}
-            </el-dropdown-item>
-            <el-dropdown-item command="codeBlock" :class="{ 'is-selected': state.codeBlock }">
-              <SquareCode :size="14" />
-              {{ t('editor.codeBlock') }}
-            </el-dropdown-item>
-          </el-dropdown-menu>
+        <template #menu>
+          <EditorDropdownItem
+            command="paragraph"
+            :class="{ 'is-selected': !state.headingLevel && !state.codeBlock && !state.blockquote }"
+          >
+            {{ t('editor.paragraph') }}
+            <span class="doc-menu__hint">{{ formatShortcut('Mod+Alt+0') }}</span>
+          </EditorDropdownItem>
+          <EditorDropdownItem
+            v-for="level in HEADING_LEVELS"
+            :key="level"
+            :class="{ 'is-selected': state.headingLevel === level }"
+            :command="level"
+          >
+            <span :class="`doc-menu__h${level}`">{{ t('editor.heading', { level }) }}</span>
+            <span class="doc-menu__hint">{{ formatShortcut(`Mod+Alt+${level}`) }}</span>
+          </EditorDropdownItem>
+          <EditorDropdownItem command="blockquote" divided :class="{ 'is-selected': state.blockquote }">
+            <EditorIcon name="quote" :size="14" />
+            {{ t('editor.quote') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="codeBlock" :class="{ 'is-selected': state.codeBlock }">
+            <EditorIcon name="square-code" :size="14" />
+            {{ t('editor.codeBlock') }}
+          </EditorDropdownItem>
         </template>
-      </el-dropdown>
+      </EditorDropdown>
 
-      <el-dropdown
-        max-height="320px"
-        popper-class="doc-editor-popper"
-        trigger="click"
-        :disabled="locked"
-        @command="setFontFamily"
-      >
+      <EditorDropdown :disabled="locked" :max-height="LONG_MENU_HEIGHT" @command="setFontFamily">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select doc-toolbar__font"
@@ -527,31 +464,28 @@ defineExpose({
           @mousedown.prevent
         >
           <span class="doc-tb-button__label">{{ fontLabel }}</span>
-          <ChevronDown :size="12" />
+          <EditorIcon name="chevron-down" :size="12" />
         </button>
-        <template #dropdown>
-          <el-dropdown-menu class="doc-menu">
-            <el-dropdown-item :class="{ 'is-selected': !state.fontFamily }" :command="DEFAULT_COMMAND">
-              {{ t('editor.defaultFont') }}
-            </el-dropdown-item>
-            <el-dropdown-item
-              v-for="font in FONT_FAMILIES"
-              :key="font.value"
-              :class="{ 'is-selected': state.fontFamily === font.normalized }"
-              :command="font.value"
-              :style="{ fontFamily: font.value }"
-            >
-              {{ font.label }}
-            </el-dropdown-item>
-          </el-dropdown-menu>
+        <template #menu>
+          <EditorDropdownItem :class="{ 'is-selected': !state.fontFamily }" :command="DEFAULT_COMMAND">
+            {{ t('editor.defaultFont') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem
+            v-for="font in FONT_FAMILIES"
+            :key="font.value"
+            :class="{ 'is-selected': state.fontFamily === font.normalized }"
+            :command="font.value"
+            :style="{ fontFamily: font.value }"
+          >
+            {{ font.label }}
+          </EditorDropdownItem>
         </template>
-      </el-dropdown>
+      </EditorDropdown>
 
-      <el-dropdown
-        max-height="320px"
-        popper-class="doc-editor-popper"
-        trigger="click"
+      <EditorDropdown
+        menu-class="doc-toolbar__size-menu"
         :disabled="locked"
+        :max-height="LONG_MENU_HEIGHT"
         @command="setFontSize"
       >
         <button
@@ -562,24 +496,22 @@ defineExpose({
           @mousedown.prevent
         >
           <span class="doc-tb-button__label">{{ fontSizeLabel }}</span>
-          <ChevronDown :size="12" />
+          <EditorIcon name="chevron-down" :size="12" />
         </button>
-        <template #dropdown>
-          <el-dropdown-menu class="doc-menu doc-toolbar__size-menu">
-            <el-dropdown-item :class="{ 'is-selected': !state.fontSize }" :command="DEFAULT_COMMAND">
-              {{ t('editor.defaultSize') }}
-            </el-dropdown-item>
-            <el-dropdown-item
-              v-for="size in FONT_SIZES"
-              :key="size"
-              :class="{ 'is-selected': state.fontSize === `${size}pt` }"
-              :command="size"
-            >
-              {{ size }}
-            </el-dropdown-item>
-          </el-dropdown-menu>
+        <template #menu>
+          <EditorDropdownItem :class="{ 'is-selected': !state.fontSize }" :command="DEFAULT_COMMAND">
+            {{ t('editor.defaultSize') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem
+            v-for="size in FONT_SIZES"
+            :key="size"
+            :class="{ 'is-selected': state.fontSize === `${size}pt` }"
+            :command="size"
+          >
+            {{ size }}
+          </EditorDropdownItem>
         </template>
-      </el-dropdown>
+      </EditorDropdown>
     </div>
 
     <span class="doc-toolbar__divider" />
@@ -598,9 +530,9 @@ defineExpose({
         @mousedown.prevent
         @click="button.toggle(engine)"
       >
-        <component :is="button.icon" :size="16" />
+        <EditorIcon :name="button.icon" :size="16" />
       </button>
-      <el-dropdown popper-class="doc-editor-popper" trigger="click" :disabled="locked" @command="runTextCommand">
+      <EditorDropdown :disabled="locked" @command="runTextCommand">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--caret"
@@ -610,37 +542,35 @@ defineExpose({
           :title="t('editor.moreFormatting')"
           @mousedown.prevent
         >
-          <ChevronDown :size="12" />
+          <EditorIcon name="chevron-down" :size="12" />
         </button>
-        <template #dropdown>
-          <el-dropdown-menu class="doc-menu">
-            <el-dropdown-item command="strike" :class="{ 'is-selected': state.strike }">
-              <Strikethrough :size="14" />
-              {{ t('editor.strike') }}
-              <span class="doc-menu__hint">{{ formatShortcut('Mod+Shift+S') }}</span>
-            </el-dropdown-item>
-            <el-dropdown-item command="subscript" :class="{ 'is-selected': state.subscript }">
-              <Subscript :size="14" />
-              {{ t('editor.subscript') }}
-              <span class="doc-menu__hint">{{ formatShortcut('Mod+,') }}</span>
-            </el-dropdown-item>
-            <el-dropdown-item command="superscript" :class="{ 'is-selected': state.superscript }">
-              <Superscript :size="14" />
-              {{ t('editor.superscript') }}
-              <span class="doc-menu__hint">{{ formatShortcut('Mod+.') }}</span>
-            </el-dropdown-item>
-            <el-dropdown-item command="code" :class="{ 'is-selected': state.code }">
-              <Code :size="14" />
-              {{ t('editor.inlineCode') }}
-              <span class="doc-menu__hint">{{ formatShortcut('Mod+E') }}</span>
-            </el-dropdown-item>
-            <el-dropdown-item command="clear" divided>
-              <RemoveFormatting :size="14" />
-              {{ t('editor.clearFormatting') }}
-            </el-dropdown-item>
-          </el-dropdown-menu>
+        <template #menu>
+          <EditorDropdownItem command="strike" :class="{ 'is-selected': state.strike }">
+            <EditorIcon name="strikethrough" :size="14" />
+            {{ t('editor.strike') }}
+            <span class="doc-menu__hint">{{ formatShortcut('Mod+Shift+S') }}</span>
+          </EditorDropdownItem>
+          <EditorDropdownItem command="subscript" :class="{ 'is-selected': state.subscript }">
+            <EditorIcon name="subscript" :size="14" />
+            {{ t('editor.subscript') }}
+            <span class="doc-menu__hint">{{ formatShortcut('Mod+,') }}</span>
+          </EditorDropdownItem>
+          <EditorDropdownItem command="superscript" :class="{ 'is-selected': state.superscript }">
+            <EditorIcon name="superscript" :size="14" />
+            {{ t('editor.superscript') }}
+            <span class="doc-menu__hint">{{ formatShortcut('Mod+.') }}</span>
+          </EditorDropdownItem>
+          <EditorDropdownItem command="code" :class="{ 'is-selected': state.code }">
+            <EditorIcon name="code" :size="14" />
+            {{ t('editor.inlineCode') }}
+            <span class="doc-menu__hint">{{ formatShortcut('Mod+E') }}</span>
+          </EditorDropdownItem>
+          <EditorDropdownItem command="clear" divided>
+            <EditorIcon name="remove-formatting" :size="14" />
+            {{ t('editor.clearFormatting') }}
+          </EditorDropdownItem>
         </template>
-      </el-dropdown>
+      </EditorDropdown>
       <EditorColorPicker
         mode="text"
         :current="state.color"
@@ -658,7 +588,7 @@ defineExpose({
     <span class="doc-toolbar__divider" />
 
     <div class="doc-toolbar__group">
-      <el-dropdown popper-class="doc-editor-popper" trigger="click" :disabled="locked" @command="setAlign">
+      <EditorDropdown :disabled="locked" @command="setAlign">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -667,26 +597,24 @@ defineExpose({
           :title="t('editor.align')"
           @mousedown.prevent
         >
-          <component :is="alignIcon" :size="16" />
-          <ChevronDown :size="12" />
+          <EditorIcon :name="alignIcon" :size="16" />
+          <EditorIcon name="chevron-down" :size="12" />
         </button>
-        <template #dropdown>
-          <el-dropdown-menu class="doc-menu">
-            <el-dropdown-item
-              v-for="alignment in ALIGNMENTS"
-              :key="alignment.value"
-              :class="{ 'is-selected': state.align === alignment.value }"
-              :command="alignment.value"
-            >
-              <component :is="alignment.icon" :size="14" />
-              {{ t(alignment.label) }}
-              <span class="doc-menu__hint">{{ formatShortcut(alignment.shortcut) }}</span>
-            </el-dropdown-item>
-          </el-dropdown-menu>
+        <template #menu>
+          <EditorDropdownItem
+            v-for="alignment in ALIGNMENTS"
+            :key="alignment.value"
+            :class="{ 'is-selected': state.align === alignment.value }"
+            :command="alignment.value"
+          >
+            <EditorIcon :name="alignment.icon" :size="14" />
+            {{ t(alignment.label) }}
+            <span class="doc-menu__hint">{{ formatShortcut(alignment.shortcut) }}</span>
+          </EditorDropdownItem>
         </template>
-      </el-dropdown>
+      </EditorDropdown>
 
-      <el-dropdown popper-class="doc-editor-popper" trigger="click" :disabled="locked" @command="setLineHeight">
+      <EditorDropdown :disabled="locked" @command="setLineHeight">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -695,27 +623,25 @@ defineExpose({
           :title="t('editor.lineHeight')"
           @mousedown.prevent
         >
-          <UnfoldVertical :size="16" />
-          <ChevronDown :size="12" />
+          <EditorIcon name="unfold-vertical" :size="16" />
+          <EditorIcon name="chevron-down" :size="12" />
         </button>
-        <template #dropdown>
-          <el-dropdown-menu class="doc-menu">
-            <el-dropdown-item :class="{ 'is-selected': !state.lineHeight }" :command="DEFAULT_COMMAND">
-              {{ t('editor.defaultLineHeight') }}
-            </el-dropdown-item>
-            <el-dropdown-item
-              v-for="lineHeight in LINE_HEIGHTS"
-              :key="lineHeight"
-              :class="{ 'is-selected': state.lineHeight === lineHeight }"
-              :command="lineHeight"
-            >
-              {{ lineHeight }}
-            </el-dropdown-item>
-          </el-dropdown-menu>
+        <template #menu>
+          <EditorDropdownItem :class="{ 'is-selected': !state.lineHeight }" :command="DEFAULT_COMMAND">
+            {{ t('editor.defaultLineHeight') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem
+            v-for="lineHeight in LINE_HEIGHTS"
+            :key="lineHeight"
+            :class="{ 'is-selected': state.lineHeight === lineHeight }"
+            :command="lineHeight"
+          >
+            {{ lineHeight }}
+          </EditorDropdownItem>
         </template>
-      </el-dropdown>
+      </EditorDropdown>
 
-      <el-dropdown popper-class="doc-editor-popper" trigger="click" :disabled="locked" @command="setDirection">
+      <EditorDropdown :disabled="locked" @command="setDirection">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -724,23 +650,21 @@ defineExpose({
           :title="t('editor.textDirection')"
           @mousedown.prevent
         >
-          <component :is="directionIcon" :size="16" />
-          <ChevronDown :size="12" />
+          <EditorIcon :name="directionIcon" :size="16" />
+          <EditorIcon name="chevron-down" :size="12" />
         </button>
-        <template #dropdown>
-          <el-dropdown-menu class="doc-menu">
-            <el-dropdown-item
-              v-for="direction in DIRECTIONS"
-              :key="direction.value"
-              :class="{ 'is-selected': state.direction === direction.value }"
-              :command="direction.value"
-            >
-              <component :is="direction.icon" :size="14" />
-              {{ t(direction.label) }}
-            </el-dropdown-item>
-          </el-dropdown-menu>
+        <template #menu>
+          <EditorDropdownItem
+            v-for="direction in DIRECTIONS"
+            :key="direction.value"
+            :class="{ 'is-selected': state.direction === direction.value }"
+            :command="direction.value"
+          >
+            <EditorIcon :name="direction.icon" :size="14" />
+            {{ t(direction.label) }}
+          </EditorDropdownItem>
         </template>
-      </el-dropdown>
+      </EditorDropdown>
 
       <button
         v-for="button in LIST_BUTTONS"
@@ -755,7 +679,7 @@ defineExpose({
         @mousedown.prevent
         @click="button.toggle(engine)"
       >
-        <component :is="button.icon" :size="16" />
+        <EditorIcon :name="button.icon" :size="16" />
       </button>
       <button
         type="button"
@@ -766,7 +690,7 @@ defineExpose({
         @mousedown.prevent
         @click="engine.indent(-1)"
       >
-        <ListIndentDecrease :size="16" />
+        <EditorIcon name="list-indent-decrease" :size="16" />
       </button>
       <button
         type="button"
@@ -777,22 +701,19 @@ defineExpose({
         @mousedown.prevent
         @click="engine.indent(1)"
       >
-        <ListIndentIncrease :size="16" />
+        <EditorIcon name="list-indent-increase" :size="16" />
       </button>
     </div>
 
     <span class="doc-toolbar__divider" />
 
     <div class="doc-toolbar__group">
-      <el-popover
-        v-model:visible="linkVisible"
-        placement="bottom-start"
-        popper-class="doc-editor-popper"
-        trigger="click"
+      <EditorPopover
+        v-model:open="linkVisible"
         :disabled="locked"
         :width="300"
-        @after-enter="linkInput?.focus()"
-        @before-enter="prepareLink"
+        @show="prepareLink"
+        @shown="linkInput?.focus()"
       >
         <template #reference>
           <button
@@ -804,38 +725,32 @@ defineExpose({
             :title="withShortcut('editor.link', 'Mod+K')"
             @mousedown.prevent
           >
-            <Link :size="16" />
+            <EditorIcon name="link" :size="16" />
           </button>
         </template>
         <form class="doc-toolbar__form" @submit.prevent="applyLink">
-          <label v-if="linkNeedsText">
+          <label v-if="linkNeedsText" class="doc-toolbar__field">
             {{ t('editor.linkText') }}
-            <el-input v-model="linkText" size="small" />
+            <input v-model="linkText" class="doc-input" type="text" />
           </label>
-          <label>
+          <label class="doc-toolbar__field">
             {{ t('editor.linkUrl') }}
-            <el-input ref="linkInput" v-model="linkUrl" placeholder="https://" size="small" />
+            <input ref="linkInput" v-model="linkUrl" class="doc-input" type="text" placeholder="https://" />
           </label>
-          <el-checkbox size="small" :model-value="linkNewTab" @change="onLinkNewTabChange">
+          <label class="doc-checkbox">
+            <input v-model="linkNewTab" type="checkbox" />
             {{ t('editor.linkNewTab') }}
-          </el-checkbox>
+          </label>
           <div class="doc-toolbar__form-actions">
-            <el-button v-if="state.link" size="small" text type="danger" @click="removeLink">
+            <button v-if="state.link" type="button" class="doc-btn doc-btn--danger-text" @click="removeLink">
               {{ t('editor.unlink') }}
-            </el-button>
-            <el-button native-type="submit" size="small" type="primary">{{ t('editor.apply') }}</el-button>
+            </button>
+            <button type="submit" class="doc-btn doc-btn--primary">{{ t('editor.apply') }}</button>
           </div>
         </form>
-      </el-popover>
+      </EditorPopover>
 
-      <el-popover
-        v-model:visible="imageVisible"
-        placement="bottom-start"
-        popper-class="doc-editor-popper"
-        trigger="click"
-        :disabled="locked"
-        :width="300"
-      >
+      <EditorPopover v-model:open="imageVisible" :disabled="locked" :width="300">
         <template #reference>
           <button
             type="button"
@@ -845,37 +760,32 @@ defineExpose({
             :title="t('editor.image')"
             @mousedown.prevent
           >
-            <ImagePlus :size="16" />
+            <EditorIcon name="image-plus" :size="16" />
           </button>
         </template>
         <div class="doc-toolbar__form">
-          <el-button size="small" :icon="Upload" :loading="uploading" @click="pickImages">
+          <button type="button" class="doc-btn" :disabled="uploading" @click="pickImages">
+            <EditorIcon :class="{ 'doc-spin': uploading }" :name="uploading ? 'loader-circle' : 'upload'" :size="14" />
             {{ t('editor.uploadImage') }}
-          </el-button>
+          </button>
           <span class="doc-toolbar__caption">{{ t('editor.or') }}</span>
           <form class="doc-toolbar__inline-form" @submit.prevent="insertImageUrl">
-            <el-input
+            <input
               v-model="imageUrl"
+              class="doc-input"
+              type="text"
               placeholder="https://example.com/image.png"
-              size="small"
-              :ariaLabel="t('editor.image')"
+              :aria-label="t('editor.image')"
             />
-            <el-button native-type="submit" size="small" type="primary" :disabled="!imageUrl.trim()">
+            <button type="submit" class="doc-btn doc-btn--primary" :disabled="!imageUrl.trim()">
               {{ t('editor.insert') }}
-            </el-button>
+            </button>
           </form>
         </div>
-      </el-popover>
+      </EditorPopover>
       <input ref="fileInput" type="file" accept="image/*" hidden multiple @change="onFilesPicked" />
 
-      <el-popover
-        v-model:visible="tableVisible"
-        placement="bottom-start"
-        popper-class="doc-editor-popper"
-        trigger="click"
-        :disabled="locked"
-        :width="212"
-      >
+      <EditorPopover v-model:open="tableVisible" :disabled="locked" :width="212">
         <template #reference>
           <button
             type="button"
@@ -885,20 +795,13 @@ defineExpose({
             :title="t('editor.table.insert')"
             @mousedown.prevent
           >
-            <Grid3x3 :size="16" />
+            <EditorIcon name="grid-3x3" :size="16" />
           </button>
         </template>
         <EditorTablePicker v-if="tableVisible" @select="insertTable" />
-      </el-popover>
+      </EditorPopover>
 
-      <el-popover
-        v-model:visible="charactersVisible"
-        placement="bottom-start"
-        popper-class="doc-editor-popper"
-        trigger="click"
-        :disabled="locked"
-        :width="258"
-      >
+      <EditorPopover v-model:open="charactersVisible" :disabled="locked" :width="258">
         <template #reference>
           <button
             type="button"
@@ -908,7 +811,7 @@ defineExpose({
             :title="t('editor.specialCharacters')"
             @mousedown.prevent
           >
-            <Omega :size="16" />
+            <EditorIcon name="omega" :size="16" />
           </button>
         </template>
         <div class="doc-toolbar__characters">
@@ -923,9 +826,9 @@ defineExpose({
             {{ character }}
           </button>
         </div>
-      </el-popover>
+      </EditorPopover>
 
-      <el-dropdown popper-class="doc-editor-popper" trigger="click" :disabled="locked" @command="insertBlock">
+      <EditorDropdown :disabled="locked" @command="insertBlock">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -934,27 +837,25 @@ defineExpose({
           :title="t('editor.insertMore')"
           @mousedown.prevent
         >
-          <Plus :size="16" />
-          <ChevronDown :size="12" />
+          <EditorIcon name="plus" :size="16" />
+          <EditorIcon name="chevron-down" :size="12" />
         </button>
-        <template #dropdown>
-          <el-dropdown-menu class="doc-menu">
-            <el-dropdown-item command="pageBreak">
-              <SquareSplitVertical :size="14" />
-              {{ t('editor.pageBreak') }}
-              <span class="doc-menu__hint">{{ formatShortcut('Mod+Enter') }}</span>
-            </el-dropdown-item>
-            <el-dropdown-item command="horizontalRule">
-              <SeparatorHorizontal :size="14" />
-              {{ t('editor.horizontalRule') }}
-            </el-dropdown-item>
-            <el-dropdown-item command="date">
-              <CalendarDays :size="14" />
-              {{ t('editor.insertDate') }}
-            </el-dropdown-item>
-          </el-dropdown-menu>
+        <template #menu>
+          <EditorDropdownItem command="pageBreak">
+            <EditorIcon name="square-split-vertical" :size="14" />
+            {{ t('editor.pageBreak') }}
+            <span class="doc-menu__hint">{{ formatShortcut('Mod+Enter') }}</span>
+          </EditorDropdownItem>
+          <EditorDropdownItem command="horizontalRule">
+            <EditorIcon name="separator-horizontal" :size="14" />
+            {{ t('editor.horizontalRule') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="date">
+            <EditorIcon name="calendar-days" :size="14" />
+            {{ t('editor.insertDate') }}
+          </EditorDropdownItem>
         </template>
-      </el-dropdown>
+      </EditorDropdown>
     </div>
 
     <span class="doc-toolbar__spacer" />
@@ -970,10 +871,10 @@ defineExpose({
         @mousedown.prevent
         @click="emit('find')"
       >
-        <Search :size="16" />
+        <EditorIcon name="search" :size="16" />
       </button>
 
-      <el-popover placement="bottom-end" popper-class="doc-editor-popper" trigger="click" :width="316">
+      <EditorPopover placement="bottom-end" :width="316">
         <template #reference>
           <button
             type="button"
@@ -982,13 +883,13 @@ defineExpose({
             :title="t('editor.page.setup')"
             @mousedown.prevent
           >
-            <FileSliders :size="16" />
+            <EditorIcon name="file-sliders" :size="16" />
           </button>
         </template>
         <EditorPageSetup :page="page" @change="emit('update:page', $event)" />
-      </el-popover>
+      </EditorPopover>
 
-      <el-dropdown placement="bottom-end" popper-class="doc-editor-popper" trigger="click" @command="onMenuCommand">
+      <EditorDropdown placement="bottom-end" @command="onMenuCommand">
         <button
           type="button"
           class="doc-tb-button"
@@ -996,34 +897,32 @@ defineExpose({
           :title="t('editor.more')"
           @mousedown.prevent
         >
-          <Ellipsis :size="16" />
+          <EditorIcon name="ellipsis" :size="16" />
         </button>
-        <template #dropdown>
-          <el-dropdown-menu class="doc-menu">
-            <el-dropdown-item command="print">
-              <Printer :size="14" />
-              {{ t('editor.print') }}
-              <span class="doc-menu__hint">{{ formatShortcut('Mod+P') }}</span>
-            </el-dropdown-item>
-            <el-dropdown-item command="exportWord">
-              <FileType :size="14" />
-              {{ t('editor.exportWord') }}
-            </el-dropdown-item>
-            <el-dropdown-item command="exportHtml">
-              <FileDown :size="14" />
-              {{ t('editor.exportHtml') }}
-            </el-dropdown-item>
-            <el-dropdown-item command="source" divided :class="{ 'is-selected': sourceMode }">
-              <FileCode :size="14" />
-              {{ t('editor.source') }}
-            </el-dropdown-item>
-            <el-dropdown-item command="fullscreen">
-              <component :is="fullscreen ? Minimize2 : Maximize2" :size="14" />
-              {{ t(fullscreen ? 'editor.exitFullscreen' : 'editor.enterFullscreen') }}
-            </el-dropdown-item>
-          </el-dropdown-menu>
+        <template #menu>
+          <EditorDropdownItem command="print">
+            <EditorIcon name="printer" :size="14" />
+            {{ t('editor.print') }}
+            <span class="doc-menu__hint">{{ formatShortcut('Mod+P') }}</span>
+          </EditorDropdownItem>
+          <EditorDropdownItem command="exportWord">
+            <EditorIcon name="file-type" :size="14" />
+            {{ t('editor.exportWord') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="exportHtml">
+            <EditorIcon name="file-down" :size="14" />
+            {{ t('editor.exportHtml') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="source" divided :class="{ 'is-selected': sourceMode }">
+            <EditorIcon name="file-code" :size="14" />
+            {{ t('editor.source') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="fullscreen">
+            <EditorIcon :name="fullscreen ? 'minimize-2' : 'maximize-2'" :size="14" />
+            {{ t(fullscreen ? 'editor.exitFullscreen' : 'editor.enterFullscreen') }}
+          </EditorDropdownItem>
         </template>
-      </el-dropdown>
+      </EditorDropdown>
     </div>
   </div>
 </template>
@@ -1039,8 +938,8 @@ defineExpose({
   min-height: 40px;
   padding: 5px 8px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  background: var(--el-bg-color);
+  border-bottom: 1px solid var(--nuvra-border-lighter);
+  background: var(--nuvra-bg);
   scrollbar-width: thin;
 }
 
@@ -1055,7 +954,7 @@ defineExpose({
   flex: 0 0 1px;
   align-self: stretch;
   margin: 4px 5px;
-  background: var(--el-border-color-lighter);
+  background: var(--nuvra-border-lighter);
 }
 
 .doc-toolbar__spacer {
@@ -1076,7 +975,8 @@ defineExpose({
   width: 50px;
 }
 
-.doc-toolbar__size-menu :deep(.el-dropdown-menu__item) {
+/* Menus stay inside the toolbar's DOM, so the deep selector reaches the size menu rendered by the dropdown. */
+.doc-toolbar :deep(.doc-toolbar__size-menu) {
   min-width: 96px;
 }
 
@@ -1086,10 +986,10 @@ defineExpose({
   gap: 8px;
 }
 
-.doc-toolbar__form label {
+.doc-toolbar__field {
   display: grid;
   gap: 4px;
-  color: var(--el-text-color-secondary);
+  color: var(--nuvra-text-muted);
   font-size: 12px;
 }
 
@@ -1100,7 +1000,7 @@ defineExpose({
 }
 
 .doc-toolbar__caption {
-  color: var(--el-text-color-secondary);
+  color: var(--nuvra-text-muted);
   font-size: 11px;
   text-align: center;
 }
@@ -1129,6 +1029,6 @@ defineExpose({
 }
 
 .doc-toolbar__characters button:hover {
-  background: var(--el-fill-color-light);
+  background: var(--nuvra-fill);
 }
 </style>

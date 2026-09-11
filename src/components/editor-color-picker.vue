@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { ChevronDown, Highlighter } from '@lucide/vue';
-import { ElPopover } from 'element-plus';
 
 import { t } from '../core/labels';
+import EditorIcon from './editor-icon.vue';
+import EditorPopover from './editor-popover.vue';
 
 /**
  * Word-style split colour button: the main part re-applies the last used colour, the caret opens a palette with
@@ -73,18 +73,10 @@ const onCustomColor = (event: Event) => apply((event.target as HTMLInputElement)
       @click="apply(lastColor)"
     >
       <span v-if="mode === 'text'" class="color-picker__letter">A</span>
-      <Highlighter v-else :size="15" />
+      <EditorIcon v-else name="highlighter" :size="15" />
       <span class="color-picker__bar" :style="{ background: lastColor }" />
     </button>
-    <el-popover
-      v-model:visible="visible"
-      trigger="click"
-      placement="bottom-start"
-      popper-class="doc-editor-popper"
-      :width="POPOVER_WIDTH"
-      :disabled="disabled"
-      :show-arrow="false"
-    >
+    <EditorPopover v-model:open="visible" :disabled="disabled" :width="POPOVER_WIDTH">
       <template #reference>
         <button
           type="button"
@@ -93,7 +85,7 @@ const onCustomColor = (event: Event) => apply((event.target as HTMLInputElement)
           :aria-label="label"
           @mousedown.prevent
         >
-          <ChevronDown :size="12" />
+          <EditorIcon name="chevron-down" :size="12" />
         </button>
       </template>
 
@@ -120,7 +112,7 @@ const onCustomColor = (event: Event) => apply((event.target as HTMLInputElement)
           {{ t('editor.colors.custom') }}
         </label>
       </div>
-    </el-popover>
+    </EditorPopover>
   </div>
 </template>
 
@@ -168,7 +160,7 @@ const onCustomColor = (event: Event) => apply((event.target as HTMLInputElement)
   padding: 0 6px;
   border: 0;
   border-radius: 6px;
-  color: var(--el-text-color-regular);
+  color: var(--nuvra-text);
   background: transparent;
   font: inherit;
   font-size: 13px;
@@ -178,14 +170,14 @@ const onCustomColor = (event: Event) => apply((event.target as HTMLInputElement)
 
 .palette__reset:hover,
 .palette__custom:hover {
-  background: var(--el-fill-color-light);
+  background: var(--nuvra-fill);
 }
 
 .palette__reset-swatch {
   width: 16px;
   height: 16px;
   box-sizing: border-box;
-  border: 1px solid var(--el-border-color);
+  border: 1px solid var(--nuvra-border);
   border-radius: 3px;
 }
 
@@ -222,7 +214,7 @@ const onCustomColor = (event: Event) => apply((event.target as HTMLInputElement)
 .palette__swatch.is-selected {
   box-shadow:
     0 0 0 2px #fff,
-    0 0 0 3.5px var(--el-color-primary);
+    0 0 0 3.5px var(--nuvra-color-primary);
 }
 
 .palette__custom input {

@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { CaseSensitive, ChevronDown, ChevronRight, ChevronUp, WholeWord, X } from '@lucide/vue';
-import { ElInput, type InputInstance } from 'element-plus';
 
 import type { DocumentEngine } from '../core/engine/engine';
 import { formatShortcut, t } from '../core/labels';
+import EditorIcon from './editor-icon.vue';
 
 /**
  * Floating find and replace panel. Drives the engine's search controller, mirrors its match counter, and offers
@@ -32,7 +31,7 @@ const showReplace = defineModel<boolean>('replace', { default: false });
 /** The longest selection that is copied into the search field when the panel opens. */
 const MAX_PREFILL_LENGTH = 120;
 
-const searchInput = ref<InputInstance>();
+const searchInput = ref<HTMLInputElement>();
 const searchTerm = ref('');
 const replaceTerm = ref('');
 const caseSensitive = ref(false);
@@ -55,24 +54,18 @@ const runSearch = () =>
     wholeWord: wholeWord.value
   });
 
-/** Returns the Enter key press of an input event, or null for any other key. */
-const asEnterKey = (event: Event | KeyboardEvent): KeyboardEvent | null =>
-  event instanceof KeyboardEvent && event.key === 'Enter' ? event : null;
-
 /** Enter jumps to the next match, Shift+Enter to the previous one. */
-const onSearchKeydown = (event: Event | KeyboardEvent) => {
-  const enter = asEnterKey(event);
-  if (!enter) return;
-  enter.preventDefault();
-  if (enter.shiftKey) props.engine.search.previous();
+const onSearchKeydown = (event: KeyboardEvent) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  if (event.shiftKey) props.engine.search.previous();
   else props.engine.search.next();
 };
 
 /** Enter in the replace field replaces the current match. */
-const onReplaceKeydown = (event: Event | KeyboardEvent) => {
-  const enter = asEnterKey(event);
-  if (!enter) return;
-  enter.preventDefault();
+const onReplaceKeydown = (event: KeyboardEvent) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
   props.engine.replaceMatch(replaceTerm.value);
 };
 
@@ -110,24 +103,22 @@ defineExpose({ focus });
       :aria-expanded="showReplace"
       @click="showReplace = !showReplace"
     >
-      <ChevronRight class="find-bar__chevron" :size="14" />
+      <EditorIcon class="find-bar__chevron" name="chevron-right" :size="14" />
     </button>
 
     <div class="find-bar__rows">
       <div class="find-bar__row">
-        <el-input
-          ref="searchInput"
-          v-model="searchTerm"
-          class="find-bar__input"
-          size="small"
-          :placeholder="t('editor.search.placeholder')"
-          :ariaLabel="t('editor.search.placeholder')"
-          @keydown="onSearchKeydown"
-        >
-          <template #suffix>
-            <span class="find-bar__count">{{ status.current }}/{{ status.total }}</span>
-          </template>
-        </el-input>
+        <label class="doc-input doc-input--affix find-bar__input">
+          <input
+            ref="searchInput"
+            v-model="searchTerm"
+            type="text"
+            :placeholder="t('editor.search.placeholder')"
+            :aria-label="t('editor.search.placeholder')"
+            @keydown="onSearchKeydown"
+          />
+          <span class="find-bar__count">{{ status.current }}/{{ status.total }}</span>
+        </label>
         <button
           type="button"
           class="doc-tb-button"
@@ -137,7 +128,7 @@ defineExpose({ focus });
           :aria-pressed="caseSensitive"
           @click="caseSensitive = !caseSensitive"
         >
-          <CaseSensitive :size="16" />
+          <EditorIcon name="case-sensitive" :size="16" />
         </button>
         <button
           type="button"
@@ -148,7 +139,7 @@ defineExpose({ focus });
           :aria-pressed="wholeWord"
           @click="wholeWord = !wholeWord"
         >
-          <WholeWord :size="16" />
+          <EditorIcon name="whole-word" :size="16" />
         </button>
         <button
           type="button"
@@ -158,7 +149,7 @@ defineExpose({ focus });
           :aria-label="t('editor.search.previous')"
           @click="engine.search.previous()"
         >
-          <ChevronUp :size="16" />
+          <EditorIcon name="chevron-up" :size="16" />
         </button>
         <button
           type="button"
@@ -168,7 +159,7 @@ defineExpose({ focus });
           :aria-label="t('editor.search.next')"
           @click="engine.search.next()"
         >
-          <ChevronDown :size="16" />
+          <EditorIcon name="chevron-down" :size="16" />
         </button>
         <button
           type="button"
@@ -177,17 +168,17 @@ defineExpose({ focus });
           :aria-label="t('editor.close')"
           @click="emit('close')"
         >
-          <X :size="16" />
+          <EditorIcon name="x" :size="16" />
         </button>
       </div>
 
       <div v-if="showReplace && !readonly" class="find-bar__row">
-        <el-input
+        <input
           v-model="replaceTerm"
-          class="find-bar__input"
-          size="small"
+          class="doc-input find-bar__input"
+          type="text"
           :placeholder="t('editor.replace.placeholder')"
-          :ariaLabel="t('editor.replace.placeholder')"
+          :aria-label="t('editor.replace.placeholder')"
           @keydown="onReplaceKeydown"
         />
         <button
@@ -222,10 +213,10 @@ defineExpose({ focus });
   align-items: flex-start;
   gap: 2px;
   padding: 5px;
-  border: 1px solid var(--el-border-color-light);
+  border: 1px solid var(--nuvra-border-light);
   border-radius: 10px;
-  background: var(--el-bg-color-overlay);
-  box-shadow: var(--el-box-shadow-light);
+  background: var(--nuvra-bg-overlay);
+  box-shadow: var(--nuvra-shadow);
 }
 
 .find-bar__rows {
@@ -245,7 +236,7 @@ defineExpose({ focus });
 }
 
 .find-bar__count {
-  color: var(--el-text-color-secondary);
+  color: var(--nuvra-text-muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
