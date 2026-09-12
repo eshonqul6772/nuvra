@@ -11,6 +11,12 @@ forms, tables, images, lists, find & replace, HTML source mode, printing and exp
 - Pagination in the page view (A4, A5, Letter, …, portrait or landscape).
 - Tables with merge / split, images with resize and alignment, task lists, links, colors, fonts.
 - Undo / redo, keyboard shortcuts that work with non-Latin keyboard layouts, Markdown-like input rules.
+- Office tools: format painter, letter case, paragraph spacing, formatting marks, a right-click menu and
+  Ctrl + wheel zoom.
+- Headers and footers with page number, page count, date and title tokens; printing breaks the pages exactly where
+  the editor shows them, and the Word export uses Word's own header, footer and page fields.
+- A ruler above the page for the margins and for the first line, left and right indents of a paragraph.
+- A page watermark such as DRAFT or COPY, drawn behind the text of every page and carried into print, HTML and Word.
 
 ## Installation
 

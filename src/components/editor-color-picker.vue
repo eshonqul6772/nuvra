@@ -47,8 +47,11 @@ const visible = ref(false);
 /** Colour re-applied by the main button, like Word. */
 const lastColor = ref<string>(INITIAL_COLOR[props.mode]);
 
-/** Accessible name and tooltip of the picker. */
-const label = t(props.mode === 'text' ? 'editor.textColor' : 'editor.highlight');
+/**
+ * Accessible name and tooltip of the picker. It is read on every render rather than kept in a constant, so a
+ * translator registered (or a language switched) after the editor was created is picked up.
+ */
+const label = () => t(props.mode === 'text' ? 'editor.textColor' : 'editor.highlight');
 
 /** Closes the palette, remembers a picked colour and emits it. */
 const apply = (color: string | null) => {
@@ -67,8 +70,8 @@ const onCustomColor = (event: Event) => apply((event.target as HTMLInputElement)
       type="button"
       class="doc-tb-button color-picker__apply"
       :disabled="disabled"
-      :title="label"
-      :aria-label="label"
+      :title="label()"
+      :aria-label="label()"
       @mousedown.prevent
       @click="apply(lastColor)"
     >
@@ -82,7 +85,7 @@ const onCustomColor = (event: Event) => apply((event.target as HTMLInputElement)
           type="button"
           class="doc-tb-button doc-tb-button--caret"
           :disabled="disabled"
-          :aria-label="label"
+          :aria-label="label()"
           @mousedown.prevent
         >
           <EditorIcon name="chevron-down" :size="12" />
@@ -103,7 +106,7 @@ const onCustomColor = (event: Event) => apply((event.target as HTMLInputElement)
             :class="{ 'is-selected': color === current.toLowerCase() }"
             :style="{ background: color }"
             :title="color"
-            :aria-label="`${label}: ${color}`"
+            :aria-label="`${label()}: ${color}`"
             @click="apply(color)"
           />
         </div>

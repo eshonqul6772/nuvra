@@ -1,4 +1,4 @@
-import type { TextAlign, TextDirection } from './engine/blocks';
+import { type TextAlign, type TextDirection, paragraphIndents, paragraphSpacing } from './engine/blocks';
 import { closestTag, closestTextBlock } from './engine/dom';
 import { activeListKind } from './engine/lists';
 import {
@@ -24,6 +24,16 @@ export interface EditorUiState {
   fontSize: string;
   /** Line spacing of the current paragraph, empty for the default. */
   lineHeight: string;
+  /** Space before the current paragraph in points; `0` when it uses the document default. */
+  spaceBefore: number;
+  /** Space after the current paragraph in points; `0` when it uses the document default. */
+  spaceAfter: number;
+  /** Left indent of the current paragraph in pixels, as shown by the ruler. */
+  indentLeft: number;
+  /** Right indent of the current paragraph in pixels. */
+  indentRight: number;
+  /** First line indent of the current paragraph in pixels; negative values hang the line out. */
+  indentFirstLine: number;
   /** Text color at the selection, empty for the default. */
   color: string;
   /** Highlight color at the selection, empty when not highlighted. */
@@ -62,6 +72,8 @@ export interface EditorUiState {
   canUndo: boolean;
   /** Whether there is a redo step. */
   canRedo: boolean;
+  /** Whether the format painter carries a copied format and waits for the text to paint. */
+  formatPainter: boolean;
 }
 
 /** Everything {@link readUiState} needs to know about the editor. */
@@ -84,6 +96,11 @@ export const EMPTY_UI_STATE: EditorUiState = {
   fontFamily: '',
   fontSize: '',
   lineHeight: '',
+  spaceBefore: 0,
+  spaceAfter: 0,
+  indentLeft: 0,
+  indentRight: 0,
+  indentFirstLine: 0,
   color: '',
   highlight: '',
   align: 'left',
@@ -102,7 +119,8 @@ export const EMPTY_UI_STATE: EditorUiState = {
   blockquote: false,
   codeBlock: false,
   canUndo: false,
-  canRedo: false
+  canRedo: false,
+  formatPainter: false
 };
 
 /** Marks reported to the toolbar. */
@@ -154,6 +172,7 @@ export const readUiState = ({ root, range, pending, canUndo, canRedo }: UiStateS
     if (pending.highlight !== undefined) highlight = pending.highlight ?? '';
   }
 
+  const indents = block ? paragraphIndents(block) : { left: 0, right: 0, firstLine: 0 };
   const listKind = activeListKind(root, anchor);
   const headingLevel = block && /^H[1-6]$/.test(block.tagName) ? Number(block.tagName[1]) : 0;
 
@@ -163,6 +182,11 @@ export const readUiState = ({ root, range, pending, canUndo, canRedo }: UiStateS
     headingLevel,
     highlight,
     lineHeight: block?.style.lineHeight ?? '',
+    spaceBefore: block ? paragraphSpacing(block, 'before') : 0,
+    spaceAfter: block ? paragraphSpacing(block, 'after') : 0,
+    indentLeft: indents.left,
+    indentRight: indents.right,
+    indentFirstLine: indents.firstLine,
     align: readAlignment(block),
     direction: readDirection(block),
     link: linkAncestor(anchor, root) !== null,
@@ -172,7 +196,8 @@ export const readUiState = ({ root, range, pending, canUndo, canRedo }: UiStateS
     blockquote: closestTag(anchor, root, 'BLOCKQUOTE') !== null,
     codeBlock: block?.tagName === 'PRE',
     canUndo,
-    canRedo
+    canRedo,
+    formatPainter: false
   };
 };
 

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+
 import { t } from '../core/labels';
 import {
   MARGIN_PRESETS,
@@ -7,6 +9,9 @@ import {
   type PageOrientation,
   type PageSettings,
   type PageSizeKey,
+  type PageWatermark,
+  createWatermark,
+  hasWatermarkText,
   isSameMargins
 } from '../core/page';
 import EditorIcon from './editor-icon.vue';
@@ -73,6 +78,15 @@ const onMarginChange = (side: keyof PageMargins, event: Event) => {
   const value = normalizeMargin(input.valueAsNumber);
   input.value = String(value);
   update({ margins: { ...props.page.margins, [side]: value } });
+};
+
+/** Watermark of the document, or an empty one while it has none. */
+const watermark = computed(() => props.page.watermark ?? createWatermark());
+
+/** Applies a watermark change; a watermark left without text is dropped from the settings. */
+const updateWatermark = (patch: Partial<PageWatermark>) => {
+  const next = { ...watermark.value, ...patch };
+  update({ watermark: hasWatermarkText(next) ? next : undefined });
 };
 
 /** Tooltip listing the four margins of a preset in millimetres. */
@@ -152,6 +166,37 @@ const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
             :value="page.margins[field.side]"
             @change="onMarginChange(field.side, $event)"
           />
+        </label>
+      </div>
+    </section>
+
+    <section class="page-setup__section">
+      <h4>{{ t('editor.page.watermark') }}</h4>
+      <input
+        class="doc-input"
+        type="text"
+        :placeholder="t('editor.page.watermarkText')"
+        :aria-label="t('editor.page.watermarkText')"
+        :value="watermark.text"
+        @input="updateWatermark({ text: ($event.target as HTMLInputElement).value })"
+      />
+      <div class="page-setup__grid">
+        <label class="page-setup__field">
+          <span>{{ t('editor.page.watermarkColor') }}</span>
+          <input
+            class="doc-input page-setup__color"
+            type="color"
+            :value="watermark.color"
+            @input="updateWatermark({ color: ($event.target as HTMLInputElement).value })"
+          />
+        </label>
+        <label class="doc-checkbox page-setup__checkbox">
+          <input
+            type="checkbox"
+            :checked="watermark.diagonal"
+            @change="updateWatermark({ diagonal: ($event.target as HTMLInputElement).checked })"
+          />
+          {{ t('editor.page.watermarkDiagonal') }}
         </label>
       </div>
     </section>
@@ -241,5 +286,16 @@ const describeMargins = ({ top, bottom, left, right }: PageMargins) =>
   gap: 3px;
   color: var(--nuvra-text-muted);
   font-size: 11px;
+}
+
+/* Watermark colour and its diagonal switch. */
+.page-setup__color {
+  height: 28px;
+  padding: 2px;
+}
+
+.page-setup__checkbox {
+  align-self: end;
+  padding-bottom: 4px;
 }
 </style>

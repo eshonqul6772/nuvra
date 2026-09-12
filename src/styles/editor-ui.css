@@ -58,6 +58,32 @@
   --nuvra-shadow: 0 0 12px rgb(0 0 0 / 72%);
 }
 
+/* While the format painter carries a format, the document shows the cursor that says where it will be painted. */
+.doc-content.is-format-painter {
+  cursor: copy;
+}
+
+/*
+ * Formatting marks: a pilcrow closes every paragraph and heading while they are shown. The marks are drawn by the
+ * editor, so they never reach the document HTML, printing or export.
+ */
+.doc-content.doc-show-marks p::after,
+.doc-content.doc-show-marks h1::after,
+.doc-content.doc-show-marks h2::after,
+.doc-content.doc-show-marks h3::after,
+.doc-content.doc-show-marks h4::after,
+.doc-content.doc-show-marks h5::after,
+.doc-content.doc-show-marks h6::after {
+  content: "¶";
+  margin-left: 1px;
+  color: var(--nuvra-color-primary);
+  font-family: system-ui, sans-serif;
+  font-weight: 400;
+  opacity: 55%;
+  pointer-events: none;
+  user-select: none;
+}
+
 /* Toolbar button, also used by the find bar, status bar, pickers and bubble menus. */
 .doc-tb-button {
   display: inline-flex;
@@ -158,6 +184,20 @@
 .doc-menu__item.is-selected {
   color: var(--nuvra-color-primary);
   font-weight: 600;
+}
+
+/* Destructive entries of the context menu. */
+.doc-menu__item.is-danger:hover,
+.doc-menu__item.is-danger:focus-visible {
+  color: var(--nuvra-color-danger);
+  background: var(--nuvra-color-danger-soft);
+}
+
+/* Entries that cannot run right now, such as copying without a selection. */
+.doc-menu__item:disabled {
+  color: var(--nuvra-text-disabled);
+  background: transparent;
+  cursor: default;
 }
 
 .doc-menu__divider {

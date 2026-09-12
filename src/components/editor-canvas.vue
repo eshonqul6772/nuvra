@@ -1,12 +1,26 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
+import type { ParagraphIndents } from '../core/engine/blocks';
 import { rangeFromPoint } from '../core/engine/clipboard';
 import type { DocumentEngine } from '../core/engine/engine';
 import { selectRange } from '../core/engine/selection';
 import { t } from '../core/labels';
-import type { DocumentViewMode, PageMetrics } from '../core/page';
+import {
+  type DocumentViewMode,
+  type PageHeaderFooter,
+  type PageMargins,
+  type PageMetrics,
+  type PageWatermark,
+  WATERMARK_ANGLE,
+  ZOOM_STEP,
+  hasHeaderFooterText,
+  hasWatermarkText,
+  renderHeaderFooter,
+  watermarkFontSize
+} from '../core/page';
 import EditorObjectOverlay from './editor-object-overlay.vue';
+import EditorRuler from './editor-ruler.vue';
 
 /**
  * Scrollable grey canvas that shows the document either as paginated sheets (page view) or as one sheet that fills
@@ -17,14 +31,28 @@ defineOptions({ name: 'EditorCanvas' });
 interface Props {
   /** Grow with the content between the editor's min and max height instead of filling a fixed height. */
   autoHeight: boolean;
+  /** Read-only document: the ruler is shown but cannot be dragged. */
+  disabled: boolean | undefined;
+  /** Document title, used by the `{title}` token of the header and footer. */
+  documentTitle: string;
   /** Engine working on the editable element; `null` until the parent has created it. */
   engine: DocumentEngine | null;
+  /** Text repeated in the bottom margin of every sheet. */
+  footer?: PageHeaderFooter;
+  /** Text repeated in the top margin of every sheet. */
+  header?: PageHeaderFooter;
+  /** Indents of the paragraph at the caret, shown by the ruler. */
+  indents: ParagraphIndents;
   /** Page size and margins in pixels. */
   metrics: PageMetrics;
   /** Number of sheets drawn behind the content in page view. */
   pageCount: number;
+  /** Whether the ruler is drawn above the sheet; it is only ever shown in the page view. */
+  rulerVisible: boolean;
   /** Paginated sheets or a single web sheet. */
   viewMode: DocumentViewMode;
+  /** Watermark drawn behind the text of every sheet. */
+  watermark?: PageWatermark;
   /** Zoom in percent. */
   zoom: number;
 }
@@ -34,6 +62,12 @@ const props = defineProps<Props>();
 interface Emits {
   /** The width available for the sheet changed; widths of a hidden canvas (source mode) are not reported. */
   resize: [contentWidth: number];
+  /** New indents of the paragraph at the caret, dragged on the ruler. */
+  updateIndents: [indents: Partial<ParagraphIndents>];
+  /** New left and right margins in millimetres, dragged on the ruler. */
+  updateMargins: [margins: Pick<PageMargins, 'left' | 'right'>];
+  /** The user asked to zoom by this many percent with Ctrl/⌘ and the wheel, or a trackpad pinch. */
+  zoom: [delta: number];
 }
 
 const emit = defineEmits<Emits>();
@@ -60,6 +94,35 @@ const px = (value: number) => `${value}px`;
 
 /** Restricts a value to the `[min, max]` interval. */
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+/** Parts of a running text, in the order they are drawn. */
+const RUNNING_PARTS = ['left', 'center', 'right'] as const;
+
+/** Whether the document has a header, and whether it has a footer. */
+const hasHeader = computed(() => hasHeaderFooterText(props.header));
+const hasFooter = computed(() => hasHeaderFooterText(props.footer));
+
+/** One part of a header or footer with its tokens replaced for the given page. */
+const runningText = (
+  value: PageHeaderFooter | undefined,
+  part: (typeof RUNNING_PARTS)[number],
+  page: number
+): string =>
+  value ? renderHeaderFooter(value[part], { page, pages: props.pageCount, title: props.documentTitle }) : '';
+
+/** Text of the watermark, empty when the document has none. */
+const watermarkText = computed(() => (hasWatermarkText(props.watermark) ? (props.watermark?.text.trim() ?? '') : ''));
+
+/** Colour, size and angle of the watermark; it is sized to span the paper. */
+const watermarkStyle = computed(() => {
+  const { metrics, watermark } = props;
+  const diagonal = watermark?.diagonal ?? true;
+  return {
+    color: watermark?.color,
+    fontSize: px(watermarkFontSize(metrics.width, metrics.height, watermarkText.value, diagonal)),
+    transform: diagonal ? `rotate(${WATERMARK_ANGLE}deg)` : undefined
+  };
+});
 
 /** Zoom as a scale factor. */
 const scale = computed(() => props.zoom / ACTUAL_SIZE_ZOOM);
@@ -134,6 +197,13 @@ const onCanvasMouseDown = (event: MouseEvent) => {
   }
 };
 
+/** Ctrl/⌘ with the wheel zooms the document instead of scrolling it; a trackpad pinch arrives as the same event. */
+const onWheel = (event: WheelEvent) => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  event.preventDefault();
+  emit('zoom', event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP);
+};
+
 /** Zoom percentage at which the page width fills the canvas, or `0` before the canvas has been measured. */
 const getFitWidthZoom = () =>
   viewport.value.width ? Math.floor((viewport.value.width / props.metrics.width) * ACTUAL_SIZE_ZOOM) : 0;
@@ -191,7 +261,18 @@ defineExpose({
     class="doc-canvas"
     :class="[`is-${viewMode}`, { 'is-auto': autoHeight }]"
     @mousedown="onCanvasMouseDown"
+    @wheel="onWheel"
   >
+    <div v-if="rulerVisible && viewMode === 'page'" class="doc-canvas__ruler" :style="{ width: sizerStyle.width }">
+      <EditorRuler
+        :disabled="disabled"
+        :indents="indents"
+        :metrics="metrics"
+        :zoom="zoom"
+        @update-indents="emit('updateIndents', $event)"
+        @update-margins="emit('updateMargins', $event)"
+      />
+    </div>
     <div class="doc-canvas__sizer" :style="sizerStyle">
       <div ref="stageRef" class="doc-canvas__stage" :style="stageStyle">
         <div v-if="viewMode === 'page'" class="doc-canvas__sheets" aria-hidden="true">
@@ -201,7 +282,14 @@ defineExpose({
             class="doc-canvas__sheet"
             :style="{ top: px((index - 1) * period) }"
           >
-            <span class="doc-canvas__page-number">{{ index }}</span>
+            <div v-if="watermarkText" class="doc-canvas__watermark" :style="watermarkStyle">{{ watermarkText }}</div>
+            <div v-if="hasHeader" class="doc-canvas__running doc-canvas__running--header">
+              <span v-for="part in RUNNING_PARTS" :key="part">{{ runningText(header, part, index) }}</span>
+            </div>
+            <div v-if="hasFooter" class="doc-canvas__running doc-canvas__running--footer">
+              <span v-for="part in RUNNING_PARTS" :key="part">{{ runningText(footer, part, index) }}</span>
+            </div>
+            <span v-else class="doc-canvas__page-number">{{ index }}</span>
           </div>
         </div>
         <div ref="contentRef" class="doc-canvas__content" />
@@ -233,6 +321,14 @@ defineExpose({
 .doc-canvas__sizer {
   position: relative;
   margin: 0 auto;
+}
+
+/* The ruler scrolls with the sheet sideways and stays at the top of the canvas while the document scrolls. */
+.doc-canvas__ruler {
+  position: sticky;
+  z-index: 3;
+  top: 0;
+  margin: 0 auto 10px;
 }
 
 /* Page geometry defaults (A4, normal margins); the stage style overrides them inline from the page settings. */
@@ -285,6 +381,60 @@ defineExpose({
   color: #98a2b3;
   font: 11px/16px system-ui, sans-serif;
   text-align: center;
+}
+
+/* Watermark behind the text; the sheets are drawn under the document, so it never covers the content. */
+.doc-canvas__watermark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-family: "Times New Roman", Times, serif;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  opacity: 16%;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Header and footer, drawn in the page margins of every sheet. */
+.doc-canvas__running {
+  /* The side parts take what they need and the centre keeps the rest, so a lone centred text uses the whole line. */
+  position: absolute;
+  right: var(--margin-right);
+  left: var(--margin-left);
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  color: #475467;
+  font: 10pt/1.4 "Times New Roman", Times, serif;
+}
+
+.doc-canvas__running span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-canvas__running span:nth-child(2) {
+  text-align: center;
+}
+
+.doc-canvas__running span:nth-child(3) {
+  text-align: right;
+}
+
+.doc-canvas__running--header {
+  top: max(6px, calc(var(--margin-top) / 2 - 8px));
+}
+
+.doc-canvas__running--footer {
+  bottom: max(6px, calc(var(--margin-bottom) / 2 - 8px));
 }
 
 /* Editable content */

@@ -1,12 +1,16 @@
 import { type EditorUiState, readUiState } from '../ui-state';
 import {
   type HeadingTag,
+  type ParagraphIndents,
+  type SpacingSide,
   type TextAlign,
   type TextDirection,
   changeIndent,
   insertBlockAtCaret,
   setBlockType,
   setLineHeight,
+  setParagraphIndents,
+  setParagraphSpacing,
   setTextAlign,
   setTextDirection,
   toggleBlockquote,
@@ -17,6 +21,7 @@ import {
   imageFiles,
   rangeFromPoint,
   readTransfer,
+  selectionClipboardData,
   singleUrl,
   textToFragment,
   transferToFragment,
@@ -56,6 +61,8 @@ import {
   type MarkName,
   type PendingFormat,
   type StyleName,
+  type TextCase,
+  applyTextCase,
   clearMarks,
   insertFormattedText,
   linkAncestor,
@@ -75,7 +82,8 @@ import {
   normalizeContainer,
   sanitizeHtml,
   sanitizeUrl,
-  serialize
+  serialize,
+  setIndent
 } from './schema';
 import { SearchController, type SearchState } from './search';
 import {
@@ -165,6 +173,24 @@ interface ImageAttributes {
   height?: number | null;
 }
 
+/** Character and paragraph formatting picked up by the format painter. */
+export interface CopiedFormat {
+  /** Marks that were active on the copied text. */
+  marks: Partial<Record<MarkName, boolean>>;
+  /** Span styles of the copied text; empty values mean the document default. */
+  styles: Partial<Record<StyleName, string>>;
+  /** Highlight colour of the copied text, empty when it was not highlighted. */
+  highlight: string;
+  /** Tag of the copied block, so headings are painted as headings. */
+  tag: 'P' | HeadingTag;
+  /** Alignment of the copied paragraph. */
+  align: TextAlign;
+  /** Line spacing of the copied paragraph, empty for the default. */
+  lineHeight: string;
+  /** Indentation steps of the copied paragraph. */
+  indent: number;
+}
+
 /**
  * Result of an edit callback: the new caret, a text bookmark, `undefined` to keep the previous selection, or `null`
  * when nothing changed and no undo step may be recorded.
@@ -224,6 +250,8 @@ export class DocumentEngine {
   private dragRange: Range | null = null;
   /** Image selected by a click, shown with resize handles. */
   private selectedImageElement: HTMLImageElement | null = null;
+  /** Formatting the format painter carries until it is painted onto a selection. */
+  private painterFormat: CopiedFormat | null = null;
 
   /**
    * Takes over `root` as the editable document, loads the initial content and starts listening to its events.
@@ -264,6 +292,8 @@ export class DocumentEngine {
     this.listen(document, 'selectionchange', this.onSelectionChange);
     this.listen(document, 'mouseup', () => {
       this.cellAnchor = null;
+      // The format painter paints once the user has finished choosing the target text.
+      if (this.painterFormat) this.paintFormat();
     });
   }
 
@@ -372,13 +402,16 @@ export class DocumentEngine {
 
   /** Snapshot of the formatting at the selection, for the toolbar. */
   getState(): EditorUiState {
-    return readUiState({
-      root: this.root,
-      range: this.currentRange(),
-      pending: this.pending,
-      canUndo: this.editable && this.history.canUndo,
-      canRedo: this.editable && this.history.canRedo
-    });
+    return {
+      ...readUiState({
+        root: this.root,
+        range: this.currentRange(),
+        pending: this.pending,
+        canUndo: this.editable && this.history.canUndo,
+        canRedo: this.editable && this.history.canRedo
+      }),
+      formatPainter: this.painterFormat !== null
+    };
   }
 
   /** Plain text of the current selection. */
@@ -400,6 +433,57 @@ export class DocumentEngine {
     if (position === 'start' && first) placeCaretAtStart(first);
     else if (position === 'end' && last) placeCaretAtEnd(last);
     else if (!getRangeWithin(this.root) && this.lastRange?.startContainer.isConnected) selectRange(this.lastRange);
+  }
+
+  /** Selects the whole document, as Ctrl/⌘+A does. */
+  selectAll(): void {
+    const range = document.createRange();
+    range.selectNodeContents(this.root);
+    this.expectInternalSelection();
+    this.root.focus({ preventScroll: true });
+    selectRange(range);
+  }
+
+  /** Copies the selection to the system clipboard as clean HTML and plain text. */
+  async copySelection(): Promise<void> {
+    const range = this.currentRange();
+    if (!range || range.collapsed) return;
+    const { html, text } = selectionClipboardData(this.root, range);
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([text], { type: 'text/plain' })
+        })
+      ]);
+    } catch {
+      // Without the async clipboard, or without permission, the legacy command still copies the selection.
+      document.execCommand('copy');
+    }
+  }
+
+  /** Copies the selection and removes it as one undo step. */
+  async cutSelection(): Promise<void> {
+    if (!this.editable) return;
+    await this.copySelection();
+    this.deleteSelection();
+  }
+
+  /** Inserts the clipboard content at the selection; the browser asks for clipboard permission the first time. */
+  async pasteFromClipboard(): Promise<void> {
+    if (!this.editable || !navigator.clipboard?.read) return;
+    let html = '';
+    let text = '';
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        if (!html && item.types.includes('text/html')) html = await (await item.getType('text/html')).text();
+        if (!text && item.types.includes('text/plain')) text = await (await item.getType('text/plain')).text();
+      }
+    } catch {
+      // Reading was refused; the keyboard shortcut shown next to the menu entry still works.
+      return;
+    }
+    if (html || text) this.insertTransfer({ html, text, files: [] });
   }
 
   // -------------------------------------------------------------------------------------------------------------
@@ -662,6 +746,7 @@ export class DocumentEngine {
     } else if (event.key === 'Escape') {
       this.clearCellSelection();
       this.selectImage(null);
+      this.cancelFormatPainter();
     }
   };
 
@@ -1036,6 +1121,82 @@ export class DocumentEngine {
     this.emit('selection', undefined);
   }
 
+  /** Changes the letter case of the selected text. */
+  changeTextCase(mode: TextCase): void {
+    this.exec(range => (applyTextCase(this.root, range, mode) ? undefined : null));
+  }
+
+  /** Stores the format the painter carries and shows the painting cursor while it does. */
+  private setPainterFormat(format: CopiedFormat | null) {
+    this.painterFormat = format;
+    this.root.classList.toggle('is-format-painter', format !== null);
+    this.emit('selection', undefined);
+  }
+
+  /**
+   * Picks up the character and paragraph formatting at the selection. The next selection made with the mouse, or a
+   * click inside a paragraph, receives it; {@link cancelFormatPainter} and Escape drop it again.
+   */
+  copyFormat(): void {
+    const range = this.currentRange();
+    const block = range ? closestTextBlock(range.startContainer, this.root) : null;
+    if (!range || !block || !this.editable) return;
+    const node = range.startContainer;
+    this.setPainterFormat({
+      marks: readMarks(this.root, node),
+      styles: {
+        color: readStyle(this.root, node, 'color'),
+        fontFamily: readStyle(this.root, node, 'fontFamily'),
+        fontSize: readStyle(this.root, node, 'fontSize')
+      },
+      highlight: readHighlight(this.root, node),
+      tag: /^H[1-6]$/.test(block.tagName) ? (block.tagName as HeadingTag) : 'P',
+      align: (block.style.textAlign || 'left') as TextAlign,
+      lineHeight: block.style.lineHeight,
+      indent: Number.parseInt(block.dataset.indent ?? '', 10) || 0
+    });
+  }
+
+  /** Drops the copied format without painting it. */
+  cancelFormatPainter(): void {
+    if (this.painterFormat) this.setPainterFormat(null);
+  }
+
+  /** Paints the copied format onto the selection, or onto the whole paragraph at a collapsed caret. */
+  paintFormat(): void {
+    const format = this.painterFormat;
+    const range = this.currentRange();
+    if (!format || !range) return;
+    if (range.collapsed) {
+      const block = closestTextBlock(range.startContainer, this.root);
+      if (!block) return;
+      const whole = document.createRange();
+      whole.selectNodeContents(block);
+      this.expectInternalSelection();
+      selectRange(whole);
+    }
+    this.setPainterFormat(null);
+    this.exec(target => {
+      // Every step rebuilds the range from the text positions: merging and splitting marks invalidates a live range,
+      // while the painted text keeps its offsets, because none of these commands changes the text itself.
+      const bookmark = rangeToBookmark(this.root, target);
+      const painted = () => bookmarkToRange(this.root, bookmark);
+      clearMarks(this.root, painted());
+      for (const [mark, active] of Object.entries(format.marks) as Array<[MarkName, boolean]>) {
+        if (active) toggleMark(this.root, painted(), mark);
+      }
+      for (const [name, value] of Object.entries(format.styles) as Array<[StyleName, string]>) {
+        if (value) setTextStyle(this.root, painted(), name, value);
+      }
+      if (format.highlight) setHighlight(this.root, painted(), format.highlight);
+      setBlockType(this.root, painted(), format.tag);
+      setTextAlign(this.root, painted(), format.align);
+      setLineHeight(this.root, painted(), format.lineHeight || null);
+      for (const block of textBlocksInRange(this.root, painted())) setIndent(block, format.indent);
+      return bookmark;
+    });
+  }
+
   /** Removes marks from the selection and turns its blocks into plain paragraphs outside lists and quotes. */
   clearFormatting(): void {
     this.exec(target => {
@@ -1090,6 +1251,20 @@ export class DocumentEngine {
   setLineHeight(lineHeight: string | null): void {
     this.exec(target => {
       setLineHeight(this.root, target, lineHeight);
+    });
+  }
+
+  /** Sets exact indents on the selected paragraphs, in pixels; sides left out keep their value. */
+  setParagraphIndents(patch: Partial<ParagraphIndents>): void {
+    this.exec(target => {
+      setParagraphIndents(this.root, target, patch);
+    });
+  }
+
+  /** Sets the space before or after the selected paragraphs, in points; `null` restores the document default. */
+  setParagraphSpacing(side: SpacingSide, points: number | null): void {
+    this.exec(target => {
+      setParagraphSpacing(this.root, target, side, points);
     });
   }
 

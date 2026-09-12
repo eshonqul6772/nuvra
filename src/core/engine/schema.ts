@@ -26,11 +26,23 @@ export const GAP_ATTRIBUTE = 'data-doc-gap';
 /** Class marking table cells in a drag selection; editor-only. */
 export const SELECTED_CELL_CLASS = 'doc-cell-selected';
 
+/** Attribute holding the space a paragraph keeps before it, in points. */
+export const SPACE_BEFORE_ATTRIBUTE = 'data-space-before';
+
+/** Attribute holding the space a paragraph keeps after it, in points. */
+export const SPACE_AFTER_ATTRIBUTE = 'data-space-after';
+
+/** Largest paragraph spacing accepted from pasted content, in points. */
+const MAX_SPACING_PT = 200;
+
 /** Width of one paragraph indentation step. */
 const INDENT_STEP_PX = 48;
 
-/** Deepest paragraph indentation. */
+/** Deepest paragraph indentation, in steps. */
 const MAX_INDENT = 10;
+
+/** Largest indent kept from loaded or pasted content, in pixels; the ruler uses the same limit. */
+const MAX_INDENT_PX = 760;
 
 /** CSS pixels per inch, the base of every absolute unit. */
 const PX_PER_INCH = 96;
@@ -160,7 +172,7 @@ const toPixels = (value: string): number => {
   if (value.endsWith('cm')) return (number * PX_PER_INCH) / CM_PER_INCH;
   if (value.endsWith('mm')) return (number * PX_PER_INCH) / MM_PER_INCH;
   if (value.endsWith('in')) return number * PX_PER_INCH;
-  return /^[\d.]+(px)?$/.test(value.trim()) ? number : 0;
+  return /^-?[\d.]+(px)?$/.test(value.trim()) ? number : 0;
 };
 
 /** Converts a pt or px font size into points rounded to half a point; other units give `null`. */
@@ -176,18 +188,60 @@ const toPoints = (value: string): string | null => {
 const wrap = (tag: string, nodes: Node[], attributes: Record<string, string> = {}): Node[] =>
   nodes.length ? [createElement(tag as 'span', attributes, nodes)] : [];
 
+/**
+ * Copies the space a pasted paragraph keeps before and after it (Word and Google Docs write it as a margin) into the
+ * editor's own spacing attributes, so pagination can tell it apart from the gaps it adds itself.
+ */
+const copyBlockSpacing = (source: HTMLElement, target: HTMLElement): void => {
+  const sides = [
+    {
+      attribute: SPACE_BEFORE_ATTRIBUTE,
+      property: 'margin-top',
+      value: source.dataset.spaceBefore || toPoints(source.style.marginTop)
+    },
+    {
+      attribute: SPACE_AFTER_ATTRIBUTE,
+      property: 'margin-bottom',
+      value: source.dataset.spaceAfter || toPoints(source.style.marginBottom)
+    }
+  ];
+  for (const side of sides) {
+    const points = Number.parseFloat(side.value ?? '');
+    if (!Number.isFinite(points) || points <= 0 || points > MAX_SPACING_PT) continue;
+    const rounded = Math.round(points * 2) / 2;
+    target.setAttribute(side.attribute, String(rounded));
+    target.style.setProperty(side.property, `${rounded}pt`);
+  }
+};
+
+/**
+ * Keeps the indents of a loaded or pasted paragraph as exact distances, so values dragged on the ruler survive a
+ * round trip. A left indent that is a whole number of steps also keeps the attribute the indent buttons work with.
+ */
+const copyBlockIndents = (source: HTMLElement, target: HTMLElement): void => {
+  const clampPx = (value: number) => Math.round(Math.min(MAX_INDENT_PX, Math.max(-MAX_INDENT_PX, value)));
+  const steps = Number.parseInt(source.dataset.indent ?? '', 10);
+  const left = clampPx(steps > 0 ? clampIndent(steps) * INDENT_STEP_PX : toPixels(source.style.marginLeft));
+  if (left > 0) {
+    if (left % INDENT_STEP_PX === 0) setIndent(target, left / INDENT_STEP_PX);
+    else target.style.marginLeft = `${left}px`;
+  }
+  const right = clampPx(toPixels(source.style.marginRight));
+  if (right > 0) target.style.marginRight = `${right}px`;
+  const firstLine = clampPx(toPixels(source.style.textIndent));
+  if (firstLine !== 0) target.style.textIndent = `${firstLine}px`;
+};
+
 /** Copies the paragraph formatting the editor supports: alignment, line height, indentation and direction. */
 const copyBlockFormat = (source: HTMLElement, target: HTMLElement): void => {
   const align = source.style.textAlign || source.getAttribute('align') || '';
   if (['center', 'right', 'justify'].includes(align)) target.style.textAlign = align;
   const lineHeight = source.style.lineHeight;
   if (lineHeight && lineHeight !== 'normal' && !lineHeight.endsWith('%')) target.style.lineHeight = lineHeight;
-  const indent = source.dataset.indent
-    ? Number.parseInt(source.dataset.indent, 10)
-    : toPixels(source.style.marginLeft) / INDENT_STEP_PX;
-  if (clampIndent(indent)) setIndent(target, indent);
+  copyBlockIndents(source, target);
   const direction = source.getAttribute('dir');
   if (direction === 'ltr' || direction === 'rtl') target.setAttribute('dir', direction);
+  copyBlockSpacing(source, target);
 };
 
 /** Turns presentational CSS (Word, Google Docs) into the editor's own marks around the converted content. */
@@ -626,7 +680,10 @@ export const sanitizeHtml = (html: string): DocumentFragment => {
  */
 export const cleanEditorArtifacts = (scope: Element | DocumentFragment, forExport: boolean): void => {
   for (const element of Array.from(scope.querySelectorAll<HTMLElement>(`[${GAP_ATTRIBUTE}]`))) {
-    element.style.removeProperty('margin-top');
+    // The paragraph's own space before it survives; only the gap pagination added is taken back.
+    const own = element.getAttribute(SPACE_BEFORE_ATTRIBUTE);
+    if (own) element.style.marginTop = `${own}pt`;
+    else element.style.removeProperty('margin-top');
     element.removeAttribute(GAP_ATTRIBUTE);
     if (!element.getAttribute('style')) element.removeAttribute('style');
   }

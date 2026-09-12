@@ -17,6 +17,26 @@ export interface PageMargins {
   left: number;
 }
 
+/** Text repeated in the top or bottom margin of every page, in three aligned parts as in office suites. */
+export interface PageHeaderFooter {
+  /** Left-aligned part. */
+  left: string;
+  /** Centred part. */
+  center: string;
+  /** Right-aligned part. */
+  right: string;
+}
+
+/** Text drawn behind the content of every page, such as “DRAFT” or “COPY”. */
+export interface PageWatermark {
+  /** Text of the watermark; without it the page has none. */
+  text: string;
+  /** Colour of the text; it is drawn faintly, so a mid grey suits most documents. */
+  color: string;
+  /** Whether the text runs diagonally across the page instead of straight across it. */
+  diagonal: boolean;
+}
+
 /** Page setup chosen by the user; the host can persist it with `v-model:page`. */
 export interface PageSettings {
   /** Paper format. */
@@ -25,6 +45,12 @@ export interface PageSettings {
   orientation: PageOrientation;
   /** Margins in millimetres. */
   margins: PageMargins;
+  /** Text repeated in the top margin of every page; omitted while the document has no header. */
+  header?: PageHeaderFooter;
+  /** Text repeated in the bottom margin of every page; omitted while the document has no footer. */
+  footer?: PageHeaderFooter;
+  /** Watermark drawn behind the text of every page; omitted while the document has none. */
+  watermark?: PageWatermark;
 }
 
 /** Page geometry in CSS pixels, ready for layout. */
@@ -97,6 +123,73 @@ export const createPageSettings = (): PageSettings => ({
   orientation: 'portrait',
   margins: { ...MARGIN_PRESETS[0].margins }
 });
+
+/** An empty header or footer, used when the user opens the form for the first time. */
+export const createHeaderFooter = (): PageHeaderFooter => ({ left: '', center: '', right: '' });
+
+/** Whether a header or footer holds any text at all. */
+export const hasHeaderFooterText = (value: PageHeaderFooter | undefined): boolean =>
+  Boolean(value && (value.left || value.center || value.right));
+
+/** Tokens a header or footer text may contain, replaced when the text is drawn on a page. */
+export const HEADER_FOOTER_TOKENS = ['page', 'pages', 'date', 'title'] as const;
+
+/** One of the tokens a header or footer text may contain. */
+export type HeaderFooterToken = (typeof HEADER_FOOTER_TOKENS)[number];
+
+/** Values the tokens of a header or footer are replaced with. */
+export interface HeaderFooterContext {
+  /** Number of the page the text is drawn on. */
+  page: number;
+  /** Number of pages in the document. */
+  pages: number;
+  /** Document title. */
+  title: string;
+}
+
+/** Pattern of the tokens, built from their names so both stay in step. */
+const TOKEN_PATTERN = new RegExp(`\\{(${HEADER_FOOTER_TOKENS.join('|')})\\}`, 'g');
+
+/** Today's date as `dd.mm.yyyy`, the format used in Uzbek documents. */
+const today = (): string => {
+  const now = new Date();
+  const twoDigits = (value: number) => String(value).padStart(2, '0');
+  return `${twoDigits(now.getDate())}.${twoDigits(now.getMonth() + 1)}.${now.getFullYear()}`;
+};
+
+/** Replaces the `{page}`, `{pages}`, `{date}` and `{title}` tokens of a header or footer text. */
+export const renderHeaderFooter = (text: string, context: HeaderFooterContext): string =>
+  text.replace(TOKEN_PATTERN, (_, token: string) => {
+    if (token === 'page') return String(context.page);
+    if (token === 'pages') return String(context.pages);
+    if (token === 'title') return context.title;
+    return today();
+  });
+
+/** An empty watermark in the default colour, used when the user opens the form for the first time. */
+export const createWatermark = (): PageWatermark => ({ text: '', color: '#9ca3af', diagonal: true });
+
+/** Whether a watermark has any text to draw. */
+export const hasWatermarkText = (value: PageWatermark | undefined): boolean => Boolean(value?.text.trim());
+
+/** How much of the paper the watermark text spans. */
+const WATERMARK_FILL = 0.86;
+/** Average width of a character relative to the font size, used to fit the text onto the paper. */
+const AVERAGE_CHARACTER_WIDTH = 0.62;
+/** Smallest watermark font size in pixels, so a short text is still large. */
+const MIN_WATERMARK_SIZE = 24;
+/** Largest watermark font size, as a share of the paper height. */
+const MAX_WATERMARK_HEIGHT_SHARE = 0.4;
+/** Angle the diagonal watermark is rotated by, in degrees. */
+export const WATERMARK_ANGLE = -35;
+
+/** Font size in pixels at which a watermark text spans the paper, straight across it or diagonally. */
+export const watermarkFontSize = (width: number, height: number, text: string, diagonal: boolean): number => {
+  const span = diagonal ? Math.sqrt(width * width + height * height) : width;
+  const characters = Math.max(4, text.trim().length) * AVERAGE_CHARACTER_WIDTH;
+  const size = (span * WATERMARK_FILL) / characters;
+  return Math.round(Math.max(MIN_WATERMARK_SIZE, Math.min(size, height * MAX_WATERMARK_HEIGHT_SHARE)));
+};
 
 /** Converts page settings into pixel geometry; an unknown paper size falls back to A4. */
 export const getPageMetrics = ({ size, orientation, margins }: PageSettings): PageMetrics => {

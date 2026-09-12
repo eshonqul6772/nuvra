@@ -66,13 +66,19 @@ const rangeText = (root: HTMLElement, range: Range): string => {
     .join('\n');
 };
 
-/** Puts clean HTML and plain text of the selection on a clipboard or drag payload for copy, cut and drag. */
-export const writeTransfer = (data: DataTransfer, root: HTMLElement, range: Range): void => {
+/** Clean HTML and plain text of a selection, as put on the clipboard by copy, cut and drag. */
+export const selectionClipboardData = (root: HTMLElement, range: Range): { html: string; text: string } => {
   const container = document.createElement('div');
   container.append(range.cloneContents());
   cleanEditorArtifacts(container, true);
-  data.setData('text/html', container.innerHTML);
-  data.setData('text/plain', rangeText(root, range));
+  return { html: container.innerHTML, text: rangeText(root, range) };
+};
+
+/** Puts clean HTML and plain text of the selection on a clipboard or drag payload for copy, cut and drag. */
+export const writeTransfer = (data: DataTransfer, root: HTMLElement, range: Range): void => {
+  const { html, text } = selectionClipboardData(root, range);
+  data.setData('text/html', html);
+  data.setData('text/plain', text);
 };
 
 /** `Document` with both caret-from-point APIs, which not every browser (or TypeScript lib) provides. */

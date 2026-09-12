@@ -8,15 +8,17 @@ import {
   type PageSettings,
   ZOOM_MAX,
   ZOOM_MIN,
+  ZOOM_STEP,
   createPageSettings,
   getPageMetrics
 } from '../core/page';
-import { type PaginationController, createPagination } from '../core/pagination';
+import { type PaginationController, createPagination, splitIntoPages } from '../core/pagination';
 import type { DocumentImageUploadHandler, DocumentMenuAction } from '../core/types';
 import { EMPTY_UI_STATE, type EditorUiState, isSameUiState } from '../core/ui-state';
 import EditorBubbleMenus from './editor-bubble-menus.vue';
 // biome-ignore lint/style/useImportType: Component is rendered in the template.
 import EditorCanvas from './editor-canvas.vue';
+import EditorContextMenu from './editor-context-menu.vue';
 // biome-ignore lint/style/useImportType: Component is rendered in the template.
 import EditorFindBar from './editor-find-bar.vue';
 import EditorStatusBar from './editor-status-bar.vue';
@@ -57,6 +59,8 @@ interface Props {
   minHeight?: CssSize;
   /** Text shown while the document is empty; falls back to the translated default placeholder. */
   placeholder?: string;
+  /** Shows the ruler above the sheet in the page view; users can also toggle it in the document menu. */
+  ruler?: boolean;
   /** Used as the print title and the exported file name. */
   title?: string;
   /** Uploads an inserted image and resolves with its URL; without it images are embedded as data URLs. */
@@ -74,6 +78,7 @@ const props = withDefaults(defineProps<Props>(), {
   maxLength: 0,
   minHeight: 240,
   placeholder: '',
+  ruler: true,
   title: '',
   uploadImage: undefined
 });
@@ -123,6 +128,10 @@ const zoom = ref(ACTUAL_SIZE_ZOOM);
 const fullscreen = ref(false);
 /** Whether the raw HTML textarea replaces the canvas. */
 const sourceMode = ref(false);
+/** Whether paragraph marks are drawn at the end of every line, as in office suites. */
+const formattingMarks = ref(false);
+/** Whether the ruler is shown; it starts from the prop and the document menu toggles it. */
+const rulerVisible = ref(props.ruler);
 /** HTML edited in source mode; applied to the document when source mode is left. */
 const sourceHtml = ref('');
 const findOpen = ref(false);
@@ -310,11 +319,18 @@ const toggleSource = () => {
 };
 
 /** Document HTML, page settings, and title used for printing and export. */
-const exportSnapshot = () => ({
-  html: engine.value && !engine.value.isEmpty ? engine.value.getHTML() : model.value,
-  page: page.value,
-  title: props.title || t('editor.document')
-});
+const exportSnapshot = () => {
+  const instance = engine.value;
+  return {
+    html: instance && !instance.isEmpty ? instance.getHTML() : model.value,
+    // The page view has the sheets laid out already, so print and export can repeat the running texts per page and
+    // break the pages exactly where the editor shows them.
+    pages:
+      instance && viewMode.value === 'page' ? splitIntoPages(instance.root, metrics.value, pageCount.value) : undefined,
+    page: page.value,
+    title: props.title || t('editor.document')
+  };
+};
 
 /** Opens the browser print dialog for the document; the export module is loaded on demand. */
 const print = async () => {
@@ -346,6 +362,14 @@ const onMenu = (action: DocumentMenuAction) => {
     case 'exportWord':
       void exportDocument('word');
       break;
+    case 'ruler':
+      rulerVisible.value = !rulerVisible.value;
+      break;
+    case 'formattingMarks':
+      formattingMarks.value = !formattingMarks.value;
+      // The class lives on the editable root, which is never serialised, so the marks stay out of the document.
+      engine.value?.root.classList.toggle('doc-show-marks', formattingMarks.value);
+      break;
     default:
       fullscreen.value = !fullscreen.value;
   }
@@ -356,6 +380,14 @@ const setZoom = (value: number) => {
   autoZoom = false;
   zoom.value = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
 };
+
+/** Applies margins dragged on the ruler. */
+const onMarginsChange = (margins: { left: number; right: number }) => {
+  page.value = { ...page.value, margins: { ...page.value.margins, ...margins } };
+};
+
+/** Zooms by whole steps, e.g. from Ctrl/⌘ and the wheel; the result is snapped to the zoom step. */
+const zoomBy = (delta: number) => setZoom(Math.round((zoom.value + delta) / ZOOM_STEP) * ZOOM_STEP);
 
 /** Zooms so the page width fills the canvas. */
 const fitWidth = () => {
@@ -532,7 +564,9 @@ defineExpose({
         :engine="engine"
         :find-open="findOpen"
         :fullscreen="fullscreen"
+        :marks-visible="formattingMarks"
         :page="page"
+        :ruler-visible="rulerVisible"
         :source-mode="sourceMode"
         :state="uiState"
         :uploading="uploading"
@@ -547,12 +581,22 @@ defineExpose({
           v-show="!sourceMode"
           ref="canvasRef"
           :auto-height="autoHeight"
+          :disabled="disabled"
+          :document-title="title || t('editor.document')"
           :engine="engine"
+          :footer="page.footer"
+          :header="page.header"
+          :indents="{ left: uiState.indentLeft, right: uiState.indentRight, firstLine: uiState.indentFirstLine }"
           :metrics="metrics"
           :page-count="pageCount"
+          :ruler-visible="rulerVisible"
           :view-mode="viewMode"
+          :watermark="page.watermark"
           :zoom="zoom"
           @resize="onCanvasResize"
+          @update-indents="engine?.setParagraphIndents($event)"
+          @update-margins="onMarginsChange"
+          @zoom="zoomBy"
         />
         <textarea
           v-if="sourceMode"
@@ -591,6 +635,13 @@ defineExpose({
         v-if="engine && canvasScroll && !disabled && !sourceMode"
         :engine="engine"
         :scroll-target="canvasScroll"
+        @edit-link="toolbarRef?.openLink()"
+      />
+
+      <EditorContextMenu
+        v-if="engine && !sourceMode"
+        :disabled="disabled"
+        :engine="engine"
         @edit-link="toolbarRef?.openLink()"
       />
     </section>

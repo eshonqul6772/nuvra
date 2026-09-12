@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import type { HeadingTag, TextAlign, TextDirection } from '../core/engine/blocks';
 import type { DocumentEngine } from '../core/engine/engine';
-import type { MarkName } from '../core/engine/marks';
+import type { MarkName, TextCase } from '../core/engine/marks';
 import type { IconName } from '../core/icons';
 import { type EditorLabelKey, formatShortcut, t, withShortcut } from '../core/labels';
-import type { PageSettings } from '../core/page';
+import { type PageSettings, hasHeaderFooterText } from '../core/page';
 import type { DocumentMenuAction } from '../core/types';
 import { type EditorUiState, normalizeFontFamily } from '../core/ui-state';
 import EditorColorPicker from './editor-color-picker.vue';
 import EditorDropdown from './editor-dropdown.vue';
 import EditorDropdownItem from './editor-dropdown-item.vue';
+import EditorHeaderFooter from './editor-header-footer.vue';
 import EditorIcon from './editor-icon.vue';
 import EditorPageSetup from './editor-page-setup.vue';
 import EditorPopover from './editor-popover.vue';
@@ -32,8 +33,12 @@ interface Props {
   findOpen: boolean;
   /** Whether the editor is in fullscreen, used for the menu item label. */
   fullscreen: boolean;
+  /** Whether the formatting marks (pilcrows) are shown in the document. */
+  marksVisible: boolean;
   /** Current page settings, edited in the page setup popover. */
   page: PageSettings;
+  /** Whether the ruler is shown above the sheet. */
+  rulerVisible: boolean;
   /** Whether the HTML source is shown; formatting controls are disabled meanwhile. */
   sourceMode: boolean;
   /** Formatting at the caret, used for active states and labels. */
@@ -87,6 +92,12 @@ const DEFAULT_COMMAND = 'default';
 const DEFAULT_FONT = 'Times New Roman';
 /** Font size, in points, the document uses when no size is applied. */
 const DEFAULT_FONT_SIZE = 12;
+/** Smallest font size that can be typed into the size field, in points. */
+const FONT_SIZE_MIN = 1;
+/** Largest font size that can be typed into the size field, in points. */
+const FONT_SIZE_MAX = 400;
+/** Space the paragraph spacing entries add before or after a paragraph, in points. */
+const PARAGRAPH_SPACING = 12;
 /** Points per CSS pixel. */
 const POINTS_PER_PIXEL = 0.75;
 /** Largest height of the long font menus, in pixels. */
@@ -108,6 +119,15 @@ const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72];
 const LINE_HEIGHTS = ['1', '1.15', '1.5', '2', '2.5', '3'];
 /** Heading levels offered in the text style menu. */
 const HEADING_LEVELS = 4;
+
+/** Letter case entries of the case menu, in the order office suites list them. */
+const TEXT_CASES = [
+  { value: 'sentence', label: 'editor.case.sentence' },
+  { value: 'lower', label: 'editor.case.lower' },
+  { value: 'upper', label: 'editor.case.upper' },
+  { value: 'title', label: 'editor.case.title' },
+  { value: 'toggle', label: 'editor.case.toggle' }
+] as const satisfies ReadonlyArray<{ value: TextCase; label: EditorLabelKey }>;
 
 const ALIGNMENTS = [
   { value: 'left', icon: 'text-align-start', label: 'editor.align.left', shortcut: 'Mod+Shift+L' },
@@ -200,6 +220,9 @@ const charactersVisible = ref(false);
 /** Formatting controls are unavailable for read-only documents and while the HTML source is shown. */
 const locked = computed(() => props.disabled || props.sourceMode);
 
+/** Whether the document has a header or a footer, which marks the running text button as active. */
+const hasRunningText = computed(() => hasHeaderFooterText(props.page.header) || hasHeaderFooterText(props.page.footer));
+
 /** Name of the block type at the caret, shown on the text style dropdown. */
 const blockLabel = computed(() => {
   if (props.state.headingLevel) return t('editor.heading', { level: props.state.headingLevel });
@@ -223,6 +246,49 @@ const fontSizeLabel = computed(() => {
   const points = props.state.fontSize.endsWith('px') ? size * POINTS_PER_PIXEL : size;
   return String(Math.round(points * 2) / 2);
 });
+
+/** Size shown in the font size field; it follows the caret while the user is not typing into it. */
+const fontSizeInput = ref(fontSizeLabel.value);
+
+watch(fontSizeLabel, size => {
+  fontSizeInput.value = size;
+});
+
+/** Applies a size typed into the font size field; values outside the supported range are ignored. */
+const applyFontSize = (input: HTMLInputElement) => {
+  const size = Number.parseFloat(input.value.replace(',', '.'));
+  if (Number.isFinite(size) && size >= FONT_SIZE_MIN && size <= FONT_SIZE_MAX) {
+    props.engine.setTextStyle('fontSize', `${Math.round(size * 2) / 2}pt`);
+  }
+  fontSizeInput.value = fontSizeLabel.value;
+};
+
+/** Enter applies the typed size and hands focus back to the document. */
+const onFontSizeEnter = (event: KeyboardEvent) => {
+  const input = event.target as HTMLInputElement;
+  applyFontSize(input);
+  input.blur();
+};
+
+/** Leaving the field applies the typed size, as in office suites. */
+const onFontSizeBlur = (event: FocusEvent) => applyFontSize(event.target as HTMLInputElement);
+
+/** Grows or shrinks the font to the next size of the list, like the A↑ and A↓ buttons of office suites. */
+const stepFontSize = (direction: 1 | -1) => {
+  const current = Number.parseFloat(fontSizeLabel.value) || DEFAULT_FONT_SIZE;
+  const larger = FONT_SIZES.find(size => size > current) ?? Math.min(FONT_SIZE_MAX, Math.ceil(current) + 1);
+  const smaller = FONT_SIZES.filter(size => size < current).at(-1) ?? Math.max(FONT_SIZE_MIN, Math.floor(current) - 1);
+  props.engine.setTextStyle('fontSize', `${direction > 0 ? larger : smaller}pt`);
+};
+
+/** Changes the letter case of the selected text. */
+const setTextCase = (command: unknown) => props.engine.changeTextCase(command as TextCase);
+
+/** Picks up the formatting at the caret, or drops it again when the painter is already carrying one. */
+const toggleFormatPainter = () => {
+  if (props.state.formatPainter) props.engine.cancelFormatPainter();
+  else props.engine.copyFormat();
+};
 
 /** Icon of the alignment at the caret. */
 const alignIcon = computed<IconName>(
@@ -263,8 +329,14 @@ const setFontSize = (command: unknown) => {
   props.engine.setTextStyle('fontSize', size === DEFAULT_COMMAND ? null : `${size}pt`);
 };
 
-/** Applies a paragraph line height, or removes it for the default entry. */
+/** Applies a line height, or one of the paragraph spacing entries of the same menu. */
 const setLineHeight = (command: unknown) => {
+  if (command === 'spaceBefore' || command === 'spaceAfter') {
+    const side = command === 'spaceBefore' ? 'before' : 'after';
+    const current = side === 'before' ? props.state.spaceBefore : props.state.spaceAfter;
+    props.engine.setParagraphSpacing(side, current ? null : PARAGRAPH_SPACING);
+    return;
+  }
   const lineHeight = String(command);
   props.engine.setLineHeight(lineHeight === DEFAULT_COMMAND ? null : lineHeight);
 };
@@ -411,6 +483,19 @@ defineExpose({
       >
         <EditorIcon name="redo-2" :size="16" />
       </button>
+      <button
+        type="button"
+        class="doc-tb-button"
+        :class="{ 'is-active': state.formatPainter }"
+        :aria-label="t('editor.formatPainter')"
+        :aria-pressed="state.formatPainter"
+        :disabled="locked"
+        :title="t('editor.formatPainter')"
+        @mousedown.prevent
+        @click="toggleFormatPainter"
+      >
+        <EditorIcon name="paintbrush" :size="16" />
+      </button>
     </div>
 
     <span class="doc-toolbar__divider" />
@@ -482,6 +567,17 @@ defineExpose({
         </template>
       </EditorDropdown>
 
+      <input
+        v-model="fontSizeInput"
+        class="doc-input doc-toolbar__size"
+        type="text"
+        inputmode="decimal"
+        :aria-label="t('editor.fontSize')"
+        :disabled="locked"
+        :title="t('editor.fontSize')"
+        @keydown.enter.prevent="onFontSizeEnter"
+        @blur="onFontSizeBlur"
+      />
       <EditorDropdown
         menu-class="doc-toolbar__size-menu"
         :disabled="locked"
@@ -490,12 +586,12 @@ defineExpose({
       >
         <button
           type="button"
-          class="doc-tb-button doc-tb-button--select doc-toolbar__size"
+          class="doc-tb-button doc-tb-button--caret"
+          :aria-label="t('editor.fontSize')"
           :disabled="locked"
           :title="t('editor.fontSize')"
           @mousedown.prevent
         >
-          <span class="doc-tb-button__label">{{ fontSizeLabel }}</span>
           <EditorIcon name="chevron-down" :size="12" />
         </button>
         <template #menu>
@@ -512,6 +608,28 @@ defineExpose({
           </EditorDropdownItem>
         </template>
       </EditorDropdown>
+      <button
+        type="button"
+        class="doc-tb-button"
+        :aria-label="t('editor.increaseFontSize')"
+        :disabled="locked"
+        :title="t('editor.increaseFontSize')"
+        @mousedown.prevent
+        @click="stepFontSize(1)"
+      >
+        <EditorIcon name="a-arrow-up" :size="16" />
+      </button>
+      <button
+        type="button"
+        class="doc-tb-button"
+        :aria-label="t('editor.decreaseFontSize')"
+        :disabled="locked"
+        :title="t('editor.decreaseFontSize')"
+        @mousedown.prevent
+        @click="stepFontSize(-1)"
+      >
+        <EditorIcon name="a-arrow-down" :size="16" />
+      </button>
     </div>
 
     <span class="doc-toolbar__divider" />
@@ -568,6 +686,24 @@ defineExpose({
           <EditorDropdownItem command="clear" divided>
             <EditorIcon name="remove-formatting" :size="14" />
             {{ t('editor.clearFormatting') }}
+          </EditorDropdownItem>
+        </template>
+      </EditorDropdown>
+      <EditorDropdown :disabled="locked" @command="setTextCase">
+        <button
+          type="button"
+          class="doc-tb-button doc-tb-button--select"
+          :aria-label="t('editor.changeCase')"
+          :disabled="locked"
+          :title="t('editor.changeCase')"
+          @mousedown.prevent
+        >
+          <EditorIcon name="case-sensitive" :size="16" />
+          <EditorIcon name="chevron-down" :size="12" />
+        </button>
+        <template #menu>
+          <EditorDropdownItem v-for="option in TEXT_CASES" :key="option.value" :command="option.value">
+            {{ t(option.label) }}
           </EditorDropdownItem>
         </template>
       </EditorDropdown>
@@ -637,6 +773,12 @@ defineExpose({
             :command="lineHeight"
           >
             {{ lineHeight }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="spaceBefore" divided>
+            {{ t(state.spaceBefore ? 'editor.spacing.removeBefore' : 'editor.spacing.addBefore') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="spaceAfter">
+            {{ t(state.spaceAfter ? 'editor.spacing.removeAfter' : 'editor.spacing.addAfter') }}
           </EditorDropdownItem>
         </template>
       </EditorDropdown>
@@ -860,7 +1002,7 @@ defineExpose({
 
     <span class="doc-toolbar__spacer" />
 
-    <div class="doc-toolbar__group">
+    <div class="doc-toolbar__group doc-toolbar__group--end">
       <button
         type="button"
         class="doc-tb-button"
@@ -873,6 +1015,22 @@ defineExpose({
       >
         <EditorIcon name="search" :size="16" />
       </button>
+
+      <EditorPopover placement="bottom-end" :width="340">
+        <template #reference>
+          <button
+            type="button"
+            class="doc-tb-button"
+            :class="{ 'is-active': hasRunningText }"
+            :aria-label="t('editor.headerFooter')"
+            :title="t('editor.headerFooter')"
+            @mousedown.prevent
+          >
+            <EditorIcon name="panel-top-dashed" :size="16" />
+          </button>
+        </template>
+        <EditorHeaderFooter :page="page" @change="emit('update:page', $event)" />
+      </EditorPopover>
 
       <EditorPopover placement="bottom-end" :width="316">
         <template #reference>
@@ -913,7 +1071,15 @@ defineExpose({
             <EditorIcon name="file-down" :size="14" />
             {{ t('editor.exportHtml') }}
           </EditorDropdownItem>
-          <EditorDropdownItem command="source" divided :class="{ 'is-selected': sourceMode }">
+          <EditorDropdownItem command="ruler" divided :class="{ 'is-selected': rulerVisible }">
+            <EditorIcon name="ruler" :size="14" />
+            {{ t('editor.ruler') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="formattingMarks" :class="{ 'is-selected': marksVisible }">
+            <EditorIcon name="pilcrow" :size="14" />
+            {{ t('editor.formattingMarks') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="source" :class="{ 'is-selected': sourceMode }">
             <EditorIcon name="file-code" :size="14" />
             {{ t('editor.source') }}
           </EditorDropdownItem>
@@ -962,6 +1128,14 @@ defineExpose({
   min-width: 8px;
 }
 
+/* Search, page setup and the document menu stay at the right edge while the formatting groups scroll behind them. */
+.doc-toolbar__group--end {
+  position: sticky;
+  right: 0;
+  padding-left: 6px;
+  background: var(--nuvra-bg);
+}
+
 /* Dropdown triggers with a value label */
 .doc-toolbar__block {
   width: 108px;
@@ -971,8 +1145,12 @@ defineExpose({
   width: 118px;
 }
 
+/* Font size field: a small editable input with the size list on its own caret button. */
 .doc-toolbar__size {
-  width: 50px;
+  width: 44px;
+  height: 28px;
+  padding: 0 4px;
+  text-align: center;
 }
 
 /* Menus stay inside the toolbar's DOM, so the deep selector reaches the size menu rendered by the dropdown. */

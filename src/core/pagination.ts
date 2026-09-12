@@ -1,4 +1,4 @@
-import { GAP_ATTRIBUTE } from './engine/schema';
+import { GAP_ATTRIBUTE, SPACE_BEFORE_ATTRIBUTE, cleanEditorArtifacts } from './engine/schema';
 import type { PageMetrics } from './page';
 
 /** Handle returned by {@link createPagination}. */
@@ -24,20 +24,29 @@ const EPSILON = 1;
 /** Page count reported when pagination is off. */
 const SINGLE_PAGE = 1;
 
+/** CSS pixels per point, used for the spacing a paragraph sets itself. */
+const PX_PER_POINT = 4 / 3;
+
 /** Top margin that pagination previously applied to a block, in pixels. */
 const readGap = (element: HTMLElement) => Number.parseFloat(element.getAttribute(GAP_ATTRIBUTE) ?? '') || 0;
+
+/** Space the paragraph itself keeps before it, in pixels; pagination adds its gap on top of it. */
+const ownSpace = (element: HTMLElement | undefined) =>
+  element ? (Number.parseFloat(element.getAttribute(SPACE_BEFORE_ATTRIBUTE) ?? '') || 0) * PX_PER_POINT : 0;
 
 /** Applies or removes the top margin that moves a block to the next sheet, touching the DOM only on change. */
 const writeGap = (element: HTMLElement, gap: number) => {
   const rounded = Math.max(0, Math.round(gap));
   if (rounded === readGap(element)) return;
+  const own = element.getAttribute(SPACE_BEFORE_ATTRIBUTE);
   if (rounded) {
     element.setAttribute(GAP_ATTRIBUTE, String(rounded));
-    element.style.marginTop = `${rounded}px`;
+    element.style.marginTop = `${Math.round(rounded + ownSpace(element))}px`;
     return;
   }
   element.removeAttribute(GAP_ATTRIBUTE);
-  element.style.removeProperty('margin-top');
+  if (own) element.style.marginTop = `${own}pt`;
+  else element.style.removeProperty('margin-top');
   if (!element.getAttribute('style')) element.removeAttribute('style');
 };
 
@@ -62,9 +71,11 @@ const paginate = (root: HTMLElement, page: PageMetrics): number => {
   const measured = children.map((element, index) => {
     const gap = readGap(element);
     if (gap) {
-      // A top margin collapses with the previous block's bottom margin; only the excess moved the block.
+      // A top margin collapses with the previous block's bottom margin, and with the paragraph's own space before
+      // it; only what the gap added on top of that collapsed margin actually moved the block.
       const previousMargin = index > 0 ? marginBottom(children[index - 1]) : 0;
-      appliedShift += index > 0 ? Math.max(gap, previousMargin) - previousMargin : gap;
+      const own = ownSpace(element);
+      appliedShift += Math.max(gap + own, previousMargin) - Math.max(own, previousMargin);
     }
     return { element, top: element.offsetTop - appliedShift, height: element.offsetHeight };
   });
@@ -82,7 +93,10 @@ const paginate = (root: HTMLElement, page: PageMetrics): number => {
     let gap = 0;
     if (top < start - EPSILON) {
       const shift = start - top;
-      gap = index > 0 ? shift + marginBottom(children[index - 1]) : shift;
+      // The gap has to lift the block by `shift` over the margin it collapses into today.
+      const own = ownSpace(element);
+      const collapsed = index > 0 ? Math.max(own, marginBottom(children[index - 1])) : own;
+      gap = collapsed + shift - own;
       added += shift;
       top = start;
     }
@@ -95,6 +109,28 @@ const paginate = (root: HTMLElement, page: PageMetrics): number => {
     writeGap(element, gaps[index] ?? 0);
   });
   return pageIndex + 1;
+};
+
+/**
+ * Splits the laid-out document into the clean HTML of every sheet, for printing and export. Pagination has already
+ * moved every block onto its page, so a block belongs to the page its top falls on; blocks taller than a page stay
+ * whole, exactly as they are shown on screen.
+ */
+export const splitIntoPages = (root: HTMLElement, metrics: PageMetrics, pageCount: number): string[] => {
+  const period = metrics.height + metrics.gap;
+  const sheets: HTMLElement[][] = Array.from({ length: Math.max(1, pageCount) }, () => []);
+  for (const child of Array.from(root.children) as HTMLElement[]) {
+    // Manual page breaks are already expressed by the split itself.
+    if (child.getAttribute('data-type') === 'page-break') continue;
+    const index = Math.min(sheets.length - 1, Math.max(0, Math.floor((child.offsetTop + EPSILON) / period)));
+    sheets[index]?.push(child);
+  }
+  return sheets.map(blocks => {
+    const container = document.createElement('div');
+    container.append(...blocks.map(block => block.cloneNode(true)));
+    cleanEditorArtifacts(container, true);
+    return container.innerHTML;
+  });
 };
 
 /** Removes all page gaps, used when switching to the continuous web view. */

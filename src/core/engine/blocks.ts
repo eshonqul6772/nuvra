@@ -15,7 +15,7 @@ import {
   textBlocksInRange,
   unwrap
 } from './dom';
-import { setIndent } from './schema';
+import { GAP_ATTRIBUTE, SPACE_AFTER_ATTRIBUTE, SPACE_BEFORE_ATTRIBUTE, setIndent } from './schema';
 
 /** Heading element tags. */
 export type HeadingTag = 'H1' | 'H2' | 'H3' | 'H4' | 'H5' | 'H6';
@@ -142,6 +142,90 @@ export const setTextDirection = (root: HTMLElement, range: Range, direction: Tex
   for (const block of textBlocksInRange(root, range)) {
     if (direction === 'auto') block.removeAttribute('dir');
     else block.setAttribute('dir', direction);
+  }
+};
+
+/** Side of a paragraph that can keep extra space, as in the paragraph settings of office suites. */
+export type SpacingSide = 'before' | 'after';
+
+/** Attribute and CSS property that hold the spacing of each side. */
+const SPACING: Record<SpacingSide, { attribute: string; property: 'margin-top' | 'margin-bottom' }> = {
+  before: { attribute: SPACE_BEFORE_ATTRIBUTE, property: 'margin-top' },
+  after: { attribute: SPACE_AFTER_ATTRIBUTE, property: 'margin-bottom' }
+};
+
+/** Space a block keeps on one side, in points; `0` when it uses the document default. */
+export const paragraphSpacing = (block: HTMLElement, side: SpacingSide): number =>
+  Number.parseFloat(block.getAttribute(SPACING[side].attribute) ?? '') || 0;
+
+/**
+ * Sets the space before or after the selected paragraphs, in points; `null` restores the document default. The gap
+ * pagination may have added is dropped, because it is written into the same margin and is recomputed anyway.
+ */
+export const setParagraphSpacing = (
+  root: HTMLElement,
+  range: Range,
+  side: SpacingSide,
+  points: number | null
+): void => {
+  const { attribute, property } = SPACING[side];
+  for (const block of textBlocksInRange(root, range)) {
+    if (block.tagName === 'PRE') continue;
+    if (points === null || points <= 0) {
+      block.removeAttribute(attribute);
+      block.style.removeProperty(property);
+    } else {
+      block.setAttribute(attribute, String(points));
+      block.style.setProperty(property, `${points}pt`);
+    }
+    if (side === 'before') block.removeAttribute(GAP_ATTRIBUTE);
+    removeEmptyStyle(block);
+  }
+};
+
+/** Paragraph indents in CSS pixels, the exact distances the ruler drags. */
+export interface ParagraphIndents {
+  /** Distance the paragraph keeps from the left text edge. */
+  left: number;
+  /** Distance it keeps from the right text edge. */
+  right: number;
+  /** Extra distance of its first line; a negative value hangs the first line out to the left. */
+  firstLine: number;
+}
+
+/** Largest indent a paragraph may get, in pixels; about 20 cm, so it always stays on the paper. */
+const MAX_INDENT_PX = 760;
+
+/** Keeps a value within the given range. */
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+/** Indents of a block; a block without them uses zero. */
+export const paragraphIndents = (block: HTMLElement): ParagraphIndents => ({
+  left: Math.round(Number.parseFloat(block.style.marginLeft) || 0),
+  right: Math.round(Number.parseFloat(block.style.marginRight) || 0),
+  firstLine: Math.round(Number.parseFloat(block.style.textIndent) || 0)
+});
+
+/**
+ * Sets exact indents on the selected paragraphs; a side left out of `patch` keeps its value. Exact indents replace
+ * the stepped indentation of the toolbar buttons, so the step attribute is dropped with them.
+ */
+export const setParagraphIndents = (root: HTMLElement, range: Range, patch: Partial<ParagraphIndents>): void => {
+  for (const block of textBlocksInRange(root, range)) {
+    if (block.tagName === 'PRE') continue;
+    const sides = [
+      { value: patch.left, property: 'margin-left', min: 0 },
+      { value: patch.right, property: 'margin-right', min: 0 },
+      { value: patch.firstLine, property: 'text-indent', min: -MAX_INDENT_PX }
+    ] as const;
+    for (const side of sides) {
+      if (side.value === undefined) continue;
+      const value = Math.round(clamp(side.value, side.min, MAX_INDENT_PX));
+      if (value === 0) block.style.removeProperty(side.property);
+      else block.style.setProperty(side.property, `${value}px`);
+    }
+    if (patch.left !== undefined) block.removeAttribute('data-indent');
+    removeEmptyStyle(block);
   }
 };
 

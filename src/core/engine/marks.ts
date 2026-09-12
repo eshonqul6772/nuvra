@@ -254,6 +254,63 @@ export const clearMarks = (root: HTMLElement, range: Range): void => {
   });
 };
 
+/** Letter case transformations offered by the toolbar. */
+export type TextCase = 'upper' | 'lower' | 'title' | 'sentence' | 'toggle';
+
+/** First letter of a word; the apostrophes used in Uzbek never start one. */
+const WORD_START = /(^|[^\p{L}\p{N}'‘’ʻʼ])(\p{L})/gu;
+
+/** First letter of a sentence: the start of the text, or a letter after a full stop and optional opening quote. */
+const SENTENCE_START = /(^|[.!?…]\s*["“«(]?\s*)(\p{L})/gu;
+
+/** Swaps the case of every character. */
+const swapCase = (text: string): string =>
+  Array.from(text, character =>
+    character === character.toLowerCase() ? character.toUpperCase() : character.toLowerCase()
+  ).join('');
+
+/** Applies a case transformation to a whole string. */
+const transformCase = (text: string, mode: TextCase): string => {
+  switch (mode) {
+    case 'upper':
+      return text.toUpperCase();
+    case 'lower':
+      return text.toLowerCase();
+    case 'title':
+      return text.toLowerCase().replace(WORD_START, (_, before, letter) => before + letter.toUpperCase());
+    case 'sentence':
+      return text.toLowerCase().replace(SENTENCE_START, (_, before, letter) => before + letter.toUpperCase());
+    default:
+      return swapCase(text);
+  }
+};
+
+/**
+ * Changes the letter case of the selected text. The selection is transformed as one string, so sentence and title
+ * case also work across formatting boundaries.
+ *
+ * @returns whether any text was selected.
+ */
+export const applyTextCase = (root: HTMLElement, range: Range, mode: TextCase): boolean => {
+  splitRangeBoundaries(range);
+  const nodes = selectedTextNodes(root, range);
+  if (!nodes.length) return false;
+  const source = nodes.map(node => node.data).join('');
+  const transformed = transformCase(source, mode);
+  // A few characters change length when their case changes (ß → SS); then every node is transformed on its own.
+  if (transformed.length !== source.length) {
+    for (const node of nodes) node.data = transformCase(node.data, mode);
+    return true;
+  }
+  let offset = 0;
+  for (const node of nodes) {
+    const next = transformed.slice(offset, offset + node.length);
+    offset += node.length;
+    if (node.data !== next) node.data = next;
+  }
+  return true;
+};
+
 /** Which marks apply to `node`. */
 export const readMarks = (root: HTMLElement, node: Node): Record<MarkName, boolean> => {
   const result = {} as Record<MarkName, boolean>;
