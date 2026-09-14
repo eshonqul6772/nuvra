@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue';
 
-import { type EditorLabelKey, t } from '../core/labels';
+import { type EditorLabelKey, useEditorLabels } from '../core/labels';
 import {
   HEADER_FOOTER_TOKENS,
   type HeaderFooterToken,
@@ -16,6 +16,8 @@ import {
  * page number, the number of pages, the date or the document title on every page.
  */
 defineOptions({ name: 'EditorHeaderFooter' });
+
+const { t } = useEditorLabels();
 
 interface Props {
   /** Settings currently applied to the document. */

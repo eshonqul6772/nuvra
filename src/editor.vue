@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import DocumentEditor from './components/document-editor.vue';
+import type { EditorLocaleInput } from './core/labels';
 import type { DocumentImageUploadHandler } from './core/types';
 
 /**
@@ -15,6 +16,8 @@ interface Props {
   canvasPadding?: number | string;
   /** Makes the content read-only and disables the toolbar. */
   disabled?: boolean;
+  /** Interface language: a built-in locale (`uz`, `en`, `ru`) or its code; defaults to the app-wide language. */
+  locale?: EditorLocaleInput;
   /** Height at which the field stops growing and starts scrolling. */
   maxHeight?: number | string;
   /** Largest accepted image file, in megabytes. */
@@ -42,6 +45,7 @@ withDefaults(defineProps<Props>(), {
   autofocus: false,
   canvasPadding: 50,
   disabled: false,
+  locale: undefined,
   maxHeight: 600,
   maxImageSizeMb: 10,
   maxLength: 0,
@@ -64,6 +68,7 @@ const model = defineModel<string>({ default: '' });
     :autofocus="autofocus"
     :canvas-padding="canvasPadding"
     :disabled="disabled"
+    :locale="locale"
     :max-height="maxHeight"
     :max-image-size-mb="maxImageSizeMb"
     :max-length="maxLength"

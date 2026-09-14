@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
-import { t } from '../core/labels';
+import { useEditorLabels } from '../core/labels';
 
 /**
  * Word-style table size grid: hovering or focusing a cell previews the size, clicking it inserts a table of
  * that size, optionally with a header row.
  */
 defineOptions({ name: 'EditorTablePicker' });
+
+const { t } = useEditorLabels();
 
 /** Table requested by the user. */
 interface TableSelection {

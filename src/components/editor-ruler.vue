@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue';
 
 import type { ParagraphIndents } from '../core/engine/blocks';
-import { type EditorLabelKey, t } from '../core/labels';
+import { type EditorLabelKey, useEditorLabels } from '../core/labels';
 import type { PageMargins, PageMetrics } from '../core/page';
 
 /**
@@ -11,6 +11,8 @@ import type { PageMargins, PageMetrics } from '../core/page';
  * the pointer is released, so a drag is a single undo step.
  */
 defineOptions({ name: 'EditorRuler' });
+
+const { t } = useEditorLabels();
 
 interface Props {
   /** Read-only documents show the ruler but do not let it be dragged. */

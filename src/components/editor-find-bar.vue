@@ -2,7 +2,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import type { DocumentEngine } from '../core/engine/engine';
-import { formatShortcut, t } from '../core/labels';
+import { formatShortcut, useEditorLabels } from '../core/labels';
 import EditorIcon from './editor-icon.vue';
 
 /**
@@ -10,6 +10,8 @@ import EditorIcon from './editor-icon.vue';
  * replace actions that the engine records as undo steps.
  */
 defineOptions({ name: 'EditorFindBar' });
+
+const { t } = useEditorLabels();
 
 interface Props {
   /** Engine whose document is searched. */

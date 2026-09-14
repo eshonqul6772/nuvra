@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import { t } from '../core/labels';
+import { useEditorLabels } from '../core/labels';
 import {
   MARGIN_PRESETS,
   PAGE_SIZES,
@@ -21,6 +21,8 @@ import EditorIcon from './editor-icon.vue';
  * Every change emits a complete new settings object.
  */
 defineOptions({ name: 'EditorPageSetup' });
+
+const { t } = useEditorLabels();
 
 interface Props {
   /** Settings currently applied to the document. */

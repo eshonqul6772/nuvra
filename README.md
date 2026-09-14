@@ -97,6 +97,7 @@ const uploadImage: DocumentImageUploadHandler = async file => {
 | `defaultViewMode` | `'page' \| 'web'`                 | `'page'` | View shown first.                                                          |
 | `disabled`        | `boolean`                         | `false`  | Read-only document, disabled controls.                                     |
 | `height`          | `number \| string`                | `760`    | Height of the editor, or `'auto'` to grow between `minHeight`/`maxHeight`. |
+| `locale`          | `EditorLocale \| 'uz' \| 'en' \| 'ru'` | —   | Interface language; defaults to the app-wide language (Uzbek).             |
 | `minHeight`       | `number \| string`                | `240`    | Smallest height of an auto-height editor.                                  |
 | `maxHeight`       | `number \| string`                | `600`    | Largest height of an auto-height editor.                                   |
 | `maxImageSizeMb`  | `number`                          | `10`     | Largest accepted image file.                                               |
@@ -136,33 +137,34 @@ redo · `Ctrl/⌘+F` — find · `Ctrl/⌘+H` — replace · `Ctrl/⌘+K` — li
 The full list, with Markdown-like input rules, is in the
 [keyboard shortcuts guide](https://nuvra-docs.vercel.app/docs/keyboard-shortcuts).
 
-## Translations
+## Languages
 
-Built-in labels are in Uzbek. Every label has a key such as `editor.bold`; the full list with default texts is
-exported as `editorMessages`. Register a translator once, before the app mounts. Returning `undefined` keeps the
-built-in text for that key.
+The interface ships in Uzbek (`uz`, the default), English (`en`) and Russian (`ru`). The translations are part of
+the package and cannot be changed from outside; an app only picks the language.
 
-```ts
-import { setEditorTranslator } from 'nuvra';
+For one editor, pass the locale (or just its code) to the `locale` prop:
 
-const en: Record<string, string> = {
-  'editor.bold': 'Bold',
-  'editor.status.words': '{count} words'
-};
+```vue
+<script setup lang="ts">
+import { DocumentEditor, ru } from 'nuvra';
+</script>
 
-setEditorTranslator((key, named) =>
-  en[key]?.replace(/\{(\w+)\}/g, (_, name) => String(named?.[name] ?? ''))
-);
+<template>
+  <DocumentEditor v-model="html" :locale="ru" />
+</template>
 ```
 
-With `vue-i18n`, labels follow the active locale:
+For the whole app, call `setEditorLocale` once, for example in `main.ts`. It is reactive, so calling it again from a
+language switcher updates editors already on the page:
 
 ```ts
-import { setEditorTranslator } from 'nuvra';
-import { i18n } from './i18n';
+import { en, setEditorLocale } from 'nuvra';
 
-setEditorTranslator((key, named) => (i18n.global.te(key) ? i18n.global.t(key, named ?? {}) : undefined));
+setEditorLocale(en);
 ```
+
+The `locale` prop wins over `setEditorLocale`; without either the editor is in Uzbek. `editorLocales` lists every
+built-in locale with its name, for language pickers.
 
 ## Theming
 

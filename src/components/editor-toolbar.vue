@@ -5,7 +5,7 @@ import type { HeadingTag, TextAlign, TextDirection } from '../core/engine/blocks
 import type { DocumentEngine } from '../core/engine/engine';
 import type { MarkName, TextCase } from '../core/engine/marks';
 import type { IconName } from '../core/icons';
-import { type EditorLabelKey, formatShortcut, t, withShortcut } from '../core/labels';
+import { type EditorLabelKey, formatShortcut, useEditorLabels } from '../core/labels';
 import { type PageSettings, hasHeaderFooterText } from '../core/page';
 import type { DocumentMenuAction } from '../core/types';
 import { type EditorUiState, normalizeFontFamily } from '../core/ui-state';
@@ -23,6 +23,8 @@ import EditorTablePicker from './editor-table-picker.vue';
  * page setup and the document menu. Reads a flat state snapshot and calls engine commands directly.
  */
 defineOptions({ name: 'EditorToolbar' });
+
+const { t, withShortcut } = useEditorLabels();
 
 interface Props {
   /** Read-only document: every editing control is disabled. */

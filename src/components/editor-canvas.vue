@@ -5,7 +5,7 @@ import type { ParagraphIndents } from '../core/engine/blocks';
 import { rangeFromPoint } from '../core/engine/clipboard';
 import type { DocumentEngine } from '../core/engine/engine';
 import { selectRange } from '../core/engine/selection';
-import { t } from '../core/labels';
+import { useEditorLabels } from '../core/labels';
 import {
   type DocumentViewMode,
   type PageHeaderFooter,
@@ -27,6 +27,8 @@ import EditorRuler from './editor-ruler.vue';
  * the canvas (web view). Owns the editable element the engine takes over.
  */
 defineOptions({ name: 'EditorCanvas' });
+
+const { t } = useEditorLabels();
 
 interface Props {
   /** Grow with the content between the editor's min and max height instead of filling a fixed height. */
@@ -263,8 +265,9 @@ defineExpose({
     @mousedown="onCanvasMouseDown"
     @wheel="onWheel"
   >
-    <div v-if="rulerVisible && viewMode === 'page'" class="doc-canvas__ruler" :style="{ width: sizerStyle.width }">
+    <div v-if="rulerVisible && viewMode === 'page'" class="doc-canvas__ruler">
       <EditorRuler
+        class="doc-canvas__ruler-track"
         :disabled="disabled"
         :indents="indents"
         :metrics="metrics"
@@ -323,12 +326,24 @@ defineExpose({
   margin: 0 auto;
 }
 
-/* The ruler scrolls with the sheet sideways and stays at the top of the canvas while the document scrolls. */
+/*
+ * The ruler scrolls with the sheet sideways and stays right under the toolbar while the document scrolls. Its band
+ * covers the canvas padding, so the scrolling text never shows between the toolbar and the ruler.
+ */
 .doc-canvas__ruler {
   position: sticky;
   z-index: 3;
-  top: 0;
-  margin: 0 auto 10px;
+  top: calc(-1 * var(--doc-editor-canvas-padding));
+  box-sizing: border-box;
+  width: max-content;
+  min-width: calc(100% + 2 * var(--doc-editor-canvas-padding));
+  margin: calc(-1 * var(--doc-editor-canvas-padding)) calc(-1 * var(--doc-editor-canvas-padding)) 16px;
+  padding: 8px var(--doc-editor-canvas-padding);
+  background: inherit;
+}
+
+.doc-canvas__ruler-track {
+  margin: 0 auto;
 }
 
 /* Page geometry defaults (A4, normal margins); the stage style overrides them inline from the page settings. */

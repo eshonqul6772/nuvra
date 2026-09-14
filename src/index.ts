@@ -1,11 +1,11 @@
 /**
  * Public API of the document editor: the editor itself, its form-field wrapper (`Editor`), page settings, the image
- * upload contract, and label translation.
+ * upload contract, and the built-in interface languages.
  */
 
 export { default as DocumentEditor } from './components/document-editor.vue';
-export type { EditorLabelKey, EditorTranslator } from './core/labels';
-export { editorMessages, setEditorTranslator } from './core/labels';
+export type { EditorLocale, EditorLocaleCode, EditorLocaleInput } from './core/labels';
+export { editorLocales, enLocale as en, ruLocale as ru, setEditorLocale, uzLocale as uz } from './core/labels';
 export type {
   DocumentViewMode,
   PageHeaderFooter,

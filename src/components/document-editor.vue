@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 
 import { DocumentEngine } from '../core/engine/engine';
-import { t } from '../core/labels';
+import { type EditorLocaleInput, useEditorLabels } from '../core/labels';
 import {
   type DocumentViewMode,
   type PageSettings,
@@ -49,6 +49,8 @@ interface Props {
   disabled?: boolean;
   /** Height of the whole editor, or `'auto'` to grow with the content between `minHeight` and `maxHeight`. */
   height?: CssSize;
+  /** Interface language: a built-in locale (`uz`, `en`, `ru`) or its code; defaults to the app-wide language. */
+  locale?: EditorLocaleInput;
   /** Largest height of an auto-height editor; longer documents scroll inside it. */
   maxHeight?: CssSize;
   /** Largest accepted image file, in megabytes. */
@@ -73,6 +75,7 @@ const props = withDefaults(defineProps<Props>(), {
   defaultViewMode: 'page',
   disabled: false,
   height: 760,
+  locale: undefined,
   maxHeight: 600,
   maxImageSizeMb: 10,
   maxLength: 0,
@@ -82,6 +85,8 @@ const props = withDefaults(defineProps<Props>(), {
   title: '',
   uploadImage: undefined
 });
+
+const { t } = useEditorLabels(() => props.locale);
 
 interface Emits {
   /** The editing surface lost focus; pending model updates have already been written. */

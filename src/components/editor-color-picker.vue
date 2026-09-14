@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 
-import { t } from '../core/labels';
+import { useEditorLabels } from '../core/labels';
 import EditorIcon from './editor-icon.vue';
 import EditorPopover from './editor-popover.vue';
 
@@ -10,6 +10,8 @@ import EditorPopover from './editor-popover.vue';
  * a reset option and a custom colour input.
  */
 defineOptions({ name: 'EditorColorPicker' });
+
+const { t } = useEditorLabels();
 
 interface Props {
   /** Colour applied under the caret, used to mark the selected swatch. */

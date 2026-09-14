@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import type { DocumentEngine, TableCommand } from '../core/engine/engine';
-import { t } from '../core/labels';
+import { useEditorLabels } from '../core/labels';
 import { SUPPORTS_POPOVER } from '../core/popover';
 import EditorIcon from './editor-icon.vue';
 
@@ -11,6 +11,8 @@ import EditorIcon from './editor-icon.vue';
  * row/column/cell actions above the active table. Shown in the top layer and positioned against the canvas viewport.
  */
 defineOptions({ name: 'EditorBubbleMenus' });
+
+const { t } = useEditorLabels();
 
 interface Props {
   /** Engine whose selection decides which menu is shown. */

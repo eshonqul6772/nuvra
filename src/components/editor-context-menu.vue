@@ -3,7 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
 
 import type { DocumentEngine, TableCommand } from '../core/engine/engine';
 import type { IconName } from '../core/icons';
-import { type EditorLabelKey, formatShortcut, t } from '../core/labels';
+import { type EditorLabelKey, formatShortcut, useEditorLabels } from '../core/labels';
 import { SUPPORTS_POPOVER, clearOpenPopover, setOpenPopover } from '../core/popover';
 import EditorIcon from './editor-icon.vue';
 
@@ -12,6 +12,8 @@ import EditorIcon from './editor-icon.vue';
  * actions are always there, links, images and table cells add their own.
  */
 defineOptions({ name: 'EditorContextMenu' });
+
+const { t } = useEditorLabels();
 
 interface Props {
   /** A read-only document only offers copying and selecting. */

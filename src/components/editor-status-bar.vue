@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { t } from '../core/labels';
+import { useEditorLabels } from '../core/labels';
 import { type DocumentViewMode, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from '../core/page';
 import EditorIcon from './editor-icon.vue';
 
@@ -8,6 +8,8 @@ import EditorIcon from './editor-icon.vue';
  * the fullscreen toggle.
  */
 defineOptions({ name: 'EditorStatusBar' });
+
+const { t } = useEditorLabels();
 
 interface Props {
   /** Number of characters in the document. */
