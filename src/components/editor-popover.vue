@@ -63,7 +63,25 @@ const toggle = () => {
   if (!props.disabled) open.value = !open.value;
 };
 
-/** Places the panel below its reference, or above it when only there it fits, and keeps it inside the viewport. */
+/** Offset of the panel from the top-left corner of its reference, fixed when the panel is placed. */
+const offsetFromReference = { left: 0, top: 0 };
+
+/**
+ * Writes the panel position from its reference. A panel in the top layer is positioned absolutely against the
+ * document, so it scrolls with the page on its own; the fallback panel is fixed to the viewport.
+ */
+const applyPosition = (reference: HTMLElement, panel: HTMLElement) => {
+  const anchor = reference.getBoundingClientRect();
+  const inTopLayer = SUPPORTS_POPOVER && panel.matches(':popover-open');
+  panel.style.position = inTopLayer ? 'absolute' : '';
+  panel.style.left = `${anchor.left + offsetFromReference.left + (inTopLayer ? window.scrollX : 0)}px`;
+  panel.style.top = `${anchor.top + offsetFromReference.top + (inTopLayer ? window.scrollY : 0)}px`;
+};
+
+/**
+ * Places the panel below its reference, or above it when only there it fits, inside the viewport. The resulting
+ * offset from the reference is kept until the panel is placed again, so scrolling moves the panel with the toolbar.
+ */
 const updatePosition = () => {
   const reference = referenceRef.value;
   const panel = panelRef.value;
@@ -83,8 +101,14 @@ const updatePosition = () => {
     Math.max(preferredLeft, VIEWPORT_MARGIN),
     Math.max(VIEWPORT_MARGIN, viewportWidth - width - VIEWPORT_MARGIN)
   );
-  panel.style.left = `${left}px`;
-  panel.style.top = `${top}px`;
+  offsetFromReference.left = left - anchor.left;
+  offsetFromReference.top = top - anchor.top;
+  applyPosition(reference, panel);
+};
+
+/** Keeps the panel next to its reference while the page or a container around the editor scrolls. */
+const followReference = () => {
+  if (referenceRef.value && panelRef.value) applyPosition(referenceRef.value, panelRef.value);
 };
 
 /** A press outside the panel and its reference closes the panel. */
@@ -114,7 +138,7 @@ const showPanel = () => {
   document.addEventListener('pointerdown', onDocumentPointerDown, true);
   document.addEventListener('keydown', onDocumentKeydown, true);
   window.addEventListener('resize', updatePosition);
-  window.addEventListener('scroll', updatePosition, true);
+  window.addEventListener('scroll', followReference, true);
   emit('shown');
 };
 
@@ -124,7 +148,7 @@ const hidePanel = () => {
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
   document.removeEventListener('keydown', onDocumentKeydown, true);
   window.removeEventListener('resize', updatePosition);
-  window.removeEventListener('scroll', updatePosition, true);
+  window.removeEventListener('scroll', followReference, true);
   const panel = panelRef.value;
   if (SUPPORTS_POPOVER && panel?.matches(':popover-open')) panel.hidePopover();
 };
@@ -172,7 +196,10 @@ onBeforeUnmount(hidePanel);
   align-items: center;
 }
 
-/* Floating panel: in the top layer when the Popover API is available, a fixed element above the page otherwise. */
+/*
+ * Floating panel: a fixed element above the page, or in the top layer when the Popover API is available. There the
+ * script positions it absolutely against the document instead, so it scrolls together with the toolbar.
+ */
 .doc-popover__panel {
   position: fixed;
   z-index: 3000;
