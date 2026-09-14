@@ -3,7 +3,14 @@
  * character formatting, links, lists, tables with merged cells, images, page breaks, the page setup and the header
  * and footer texts. The result still passes through the editor's sanitiser.
  */
-import { MARGIN_PRESETS, PAGE_SIZES, type PageHeaderFooter, type PageSettings, type PageSizeKey } from '../page';
+import {
+  MARGIN_PRESETS,
+  PAGE_SIZES,
+  type PageHeaderFooter,
+  type PageOrientation,
+  type PageSettings,
+  type PageSizeKey
+} from '../page';
 import { readZip } from './zip';
 
 /** What was read from a Word document. */
@@ -122,6 +129,10 @@ class DocxReader {
   private readonly numbering = new Map<string, Map<number, ListLevel>>();
   /** Plain texts of the footnotes, by id. */
   private readonly footnotes = new Map<string, string>();
+  /** Orientation of every section of the document, in order; set by {@link readSections}. */
+  private sectionOrientations: PageOrientation[] = [];
+  /** Sections ended so far while the body is read. */
+  private endedSections = 0;
 
   constructor(private readonly files: Map<string, Uint8Array>) {
     const rels = parsePart(files, 'word/_rels/document.xml.rels');
@@ -153,6 +164,27 @@ class DocxReader {
         .trim();
       this.footnotes.set(attr(footnote, 'id') ?? '', text);
     }
+  }
+
+  /**
+   * Reads the sections of the body: every paragraph that carries section properties ends a section, and the body's
+   * own section properties describe the last one.
+   * @returns the section properties in order.
+   */
+  readSections(body: Element): Element[] {
+    const sections = [
+      ...children(body, 'p')
+        .map(paragraph => child(child(paragraph, 'pPr'), 'sectPr'))
+        .filter((section): section is Element => section !== null),
+      ...children(body, 'sectPr').slice(-1)
+    ];
+    this.sectionOrientations = sections.map(section => {
+      const size = child(section, 'pgSz');
+      const landscape =
+        attr(size, 'orient') === 'landscape' || Number(attr(size, 'w') ?? 0) > Number(attr(size, 'h') ?? 0);
+      return landscape ? 'landscape' : 'portrait';
+    });
+    return sections;
   }
 
   /** Paragraph styles that are headings: `Heading1`…`Heading6`, `Title`, or styles with an outline level. */
@@ -372,6 +404,15 @@ class DocxReader {
       if (node.localName !== 'p') continue;
 
       const properties = child(node, 'pPr');
+      // A paragraph with section properties is the last one of its section; the next section may be turned.
+      const sectionEnd = container.localName === 'body' && child(properties, 'sectPr') !== null;
+      const endSection = () => {
+        if (!sectionEnd) return;
+        flushList();
+        this.endedSections += 1;
+        const orientation = this.sectionOrientations[this.endedSections] ?? 'portrait';
+        output.push(`<div data-type="section-break" data-orientation="${orientation}"></div>`);
+      };
       if (isOn(child(properties, 'pageBreakBefore'))) {
         flushList();
         output.push('<div data-type="page-break"></div>');
@@ -389,15 +430,22 @@ class DocxReader {
         // Another numbering instance at the top level starts a separate list.
         if (level === 0 && list.length && list[0]?.numId !== numId) flushList();
         list.push({ numId, level, content: content.replaceAll(PAGE_BREAK_MARK, ''), format });
+        endSection();
         continue;
       }
       flushList();
+      // An empty paragraph that only carries the section properties is not content.
+      if (sectionEnd && !content) {
+        endSection();
+        continue;
+      }
       // A page break inside a paragraph splits it: the text before the break stays on the page, the rest follows.
       const pieces = content.split(PAGE_BREAK_MARK);
       pieces.forEach((piece, index) => {
         if (index > 0) output.push('<div data-type="page-break"></div>');
         if (piece || pieces.length === 1) output.push(`<${tag}${attributes}>${piece}</${tag}>`);
       });
+      endSection();
     }
     flushList();
     return output.join('');
@@ -547,8 +595,10 @@ class DocxReader {
   }
 
   /** Page setup from the last section properties of the body. */
-  pageSettings(body: Element | null): PageSettings {
-    const section = children(body, 'sectPr').at(-1) ?? null;
+  pageSettings(body: Element | null, sections: Element[] = []): PageSettings {
+    // The document takes the paper, orientation and margins of its first section; later sections are section breaks.
+    const last = children(body, 'sectPr').at(-1) ?? null;
+    const section = sections[0] ?? last;
     const size = child(section, 'pgSz');
     const margins = child(section, 'pgMar');
     const toMm = (value: string | null, fallback: number) =>
@@ -565,8 +615,13 @@ class DocxReader {
           Math.abs(PAGE_SIZES[candidate].height - portraitHeight) < PAPER_TOLERANCE_MM
       ) ?? 'a4';
     const fallback = MARGIN_PRESETS[0].margins;
-    const headerReference = children(section, 'headerReference').find(reference => attr(reference, 'type') !== 'first');
-    const footerReference = children(section, 'footerReference').find(reference => attr(reference, 'type') !== 'first');
+    // Header and footer references carry on into later sections, so any section may hold them.
+    const referenced = (name: string) =>
+      [section, last]
+        .flatMap(candidate => children(candidate, name))
+        .find(reference => attr(reference, 'type') !== 'first');
+    const headerReference = referenced('headerReference');
+    const footerReference = referenced('footerReference');
     const reference = (element: Element | undefined) =>
       element ? (element.getAttributeNS(NS_R, 'id') ?? element.getAttribute('r:id')) : null;
     const settings: PageSettings = {
@@ -602,5 +657,6 @@ export const readDocx = async (data: ArrayBuffer | Uint8Array): Promise<DocxImpo
   const body = descendants(document, 'body')[0];
   if (!body) throw new Error('Not a Word document');
   const reader = new DocxReader(files);
-  return { html: reader.blocks(body), page: reader.pageSettings(body) };
+  const sections = reader.readSections(body);
+  return { html: reader.blocks(body), page: reader.pageSettings(body, sections) };
 };

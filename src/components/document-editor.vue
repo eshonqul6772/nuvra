@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 
+import type { Collaborator, SelectionOffsets } from '../core/collaboration';
 import { type DocumentComment, createCommentId, sortComments } from '../core/comments';
 import { formatLongDate, formatShortDate } from '../core/dates';
 import { templateVariableLabel } from '../core/document-templates';
@@ -11,6 +12,7 @@ import type { IconName } from '../core/icons';
 import { type EditorLabelKey, type EditorLocaleInput, useEditorLabels } from '../core/labels';
 import {
   type OutlineHeading,
+  type OutlineView,
   TABLE_OF_CONTENTS_DEPTH,
   type TableOfContentsEntry,
   buildTableOfContents
@@ -25,7 +27,14 @@ import {
   getPageMetrics,
   pageNumberOf
 } from '../core/page';
-import { type PaginationController, createPagination, splitIntoPages } from '../core/pagination';
+import {
+  type PaginationController,
+  type SheetGeometry,
+  createPagination,
+  sheetIndexAt,
+  splitIntoPages,
+  uniformSheets
+} from '../core/pagination';
 import { SIGNATURE_PRESETS, buildSignatureBlock } from '../core/signature';
 import type { SlashCommand } from '../core/slash-commands';
 import type { TemplateVariable } from '../core/templates';
@@ -35,6 +44,7 @@ import EditorBubbleMenus from './editor-bubble-menus.vue';
 // biome-ignore lint/style/useImportType: Component is rendered in the template.
 import EditorCanvas from './editor-canvas.vue';
 import EditorChanges from './editor-changes.vue';
+import EditorCollaborators from './editor-collaborators.vue';
 import EditorComments from './editor-comments.vue';
 import EditorContextMenu from './editor-context-menu.vue';
 // biome-ignore lint/style/useImportType: Component is rendered in the template.
@@ -64,6 +74,8 @@ interface Props {
   autofocus?: boolean;
   /** Gray space around the page or web sheet that separates the document from the editor frame. */
   canvasPadding?: CssSize;
+  /** Other people editing the document; their carets and selections are drawn over it. */
+  collaborators?: readonly Collaborator[];
   /** Name written as the author of new comments, replies and tracked changes. */
   author?: string;
   /** View shown first; form fields use the lighter web view. */
@@ -99,6 +111,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   autofocus: false,
   canvasPadding: 50,
+  collaborators: () => [],
   author: '',
   defaultViewMode: 'page',
   disabled: false,
@@ -127,6 +140,10 @@ interface Emits {
   uploadError: [error: unknown];
   /** A Word file could not be read; the document is left unchanged. */
   importError: [error: unknown];
+  /** The PDF could not be drawn, for example because the browser does not allow it. */
+  exportError: [error: unknown];
+  /** The caret or selection moved; `null` when it left the document. Send it to the other people editing. */
+  selectionChange: [selection: SelectionOffsets | null];
 }
 
 const emit = defineEmits<Emits>();
@@ -193,6 +210,11 @@ const replaceOpen = ref(false);
 /** Whether images are currently being read or uploaded. */
 const uploading = ref(false);
 const pageCount = ref(1);
+/** Position, size and orientation of every sheet, as laid out by pagination. */
+const sheetGeometry = shallowRef<SheetGeometry[]>([]);
+/** Sheets of the current layout, or alike sheets while pagination has not reported them. */
+const currentSheets = () =>
+  sheetGeometry.value.length === pageCount.value ? sheetGeometry.value : uniformSheets(metrics.value, pageCount.value);
 /** Footnotes of every sheet, as laid out by pagination. */
 const footnotePages = shallowRef<SheetFootnote[][]>([]);
 /** Page that contains the caret, shown in the status bar. */
@@ -271,8 +293,7 @@ const readCurrentPage = () => {
     (container instanceof Element ? container : container.parentElement)?.getBoundingClientRect();
   if (!caretRect) return currentPage.value;
   const offset = (caretRect.top - instance.root.getBoundingClientRect().top) / (zoom.value / ACTUAL_SIZE_ZOOM);
-  const pageNumber = Math.floor(offset / (metrics.value.height + metrics.value.gap)) + 1;
-  return Math.min(pageCount.value, Math.max(1, pageNumber));
+  return Math.min(pageCount.value, sheetIndexAt(currentSheets(), offset) + 1);
 };
 
 /** Reads the toolbar state and current page; the snapshot is published only when a visible value changed. */
@@ -381,7 +402,10 @@ const exportSnapshot = () => {
     // The page view has the sheets laid out already, so print and export can repeat the running texts per page and
     // break the pages exactly where the editor shows them.
     pages:
-      instance && viewMode.value === 'page' ? splitIntoPages(instance.root, metrics.value, pageCount.value) : undefined,
+      instance && viewMode.value === 'page'
+        ? splitIntoPages(instance.root, metrics.value, pageCount.value, currentSheets())
+        : undefined,
+    rotated: viewMode.value === 'page' ? currentSheets().map(sheet => sheet.rotated) : undefined,
     footnotes: footnotePages.value,
     page: page.value,
     title: props.title || t('editor.document')
@@ -394,9 +418,32 @@ const print = async () => {
   printHtml(buildPrintableHtml(exportSnapshot()));
 };
 
-/** Downloads the document as a standalone HTML page or as a Word document (`.docx`); both modules load on demand. */
-const exportDocument = async (format: 'html' | 'word') => {
-  const { buildPrintableHtml, downloadFile, toFileName } = await import('../core/export');
+/**
+ * Downloads the document as a standalone HTML page, a Word document (`.docx`) or a PDF; the modules load on demand.
+ * A PDF is drawn from the sheets of the page view, so the web view switches to it for the moment of the export.
+ */
+const exportDocument = async (format: 'html' | 'word' | 'pdf') => {
+  const { buildPrintableHtml, downloadFile, paperSize, toFileName } = await import('../core/export');
+  if (format === 'pdf') {
+    const previousMode = viewMode.value;
+    if (previousMode !== 'page') {
+      viewMode.value = 'page';
+      await nextTick();
+      await afterLayout();
+      await afterLayout();
+    }
+    try {
+      const snapshot = exportSnapshot();
+      const { PDF_MIME, renderPdf } = await import('../core/pdf');
+      const pdf = await renderPdf(buildPrintableHtml(snapshot), paperSize(snapshot.page));
+      downloadFile(pdf, `${toFileName(snapshot.title)}.pdf`, PDF_MIME);
+    } catch (error) {
+      emit('exportError', error);
+    } finally {
+      viewMode.value = previousMode;
+    }
+    return;
+  }
   const snapshot = exportSnapshot();
   const fileName = toFileName(snapshot.title);
   if (format === 'word') {
@@ -412,6 +459,10 @@ const OUTLINE_REFRESH_DELAY = 300;
 
 /** Whether the navigation panel is open. */
 const outlineVisible = ref(false);
+/** Whether the navigation panel lists headings or page thumbnails. */
+const outlineView = ref<OutlineView>('headings');
+/** Clean HTML of every sheet, for the page thumbnails. */
+const outlinePages = shallowRef<string[]>([]);
 /** Headings shown in the navigation panel, with the page each starts on. */
 const outline = shallowRef<Array<OutlineHeading & { page: number | null }>>([]);
 let outlineTimer: ReturnType<typeof setTimeout> | undefined;
@@ -419,8 +470,7 @@ let outlineTimer: ReturnType<typeof setTimeout> | undefined;
 /** Page number printed on the sheet a top-level block starts on, or `null` outside the page view. */
 const pageOfBlock = (element: HTMLElement) => {
   if (viewMode.value !== 'page') return null;
-  const { height, gap } = metrics.value;
-  return pageNumberOf(page.value, Math.floor((element.offsetTop + 1) / (height + gap)) + 1);
+  return pageNumberOf(page.value, sheetIndexAt(currentSheets(), element.offsetTop) + 1);
 };
 
 /** Re-reads the headings for the navigation panel; skipped while the panel is closed. */
@@ -429,7 +479,17 @@ const refreshOutline = () => {
   outlineTimer = undefined;
   const instance = engine.value;
   if (!instance || !outlineVisible.value) return;
+  if (outlineView.value === 'pages') {
+    outlinePages.value =
+      viewMode.value === 'page' ? splitIntoPages(instance.root, metrics.value, pageCount.value, currentSheets()) : [];
+    return;
+  }
   outline.value = instance.getOutline().map(heading => ({ ...heading, page: pageOfBlock(heading.element) }));
+};
+
+/** Scrolls the canvas to a sheet chosen in the navigation panel, counted from 0. */
+const goToPage = (index: number) => {
+  canvasRef.value?.scrollElement?.querySelectorAll('.doc-canvas__sheet')[index]?.scrollIntoView({ block: 'start' });
 };
 
 /** Refreshes the navigation panel once editing pauses. */
@@ -559,6 +619,23 @@ const removeComment = (id: string) => {
 
 watch([comments, commentsVisible, () => uiState.value.comment], syncComments, { deep: true });
 
+/** Last selection reported with `selectionChange`, serialised, so moves within the same position are not sent. */
+let reportedSelection = '';
+
+/** Reports where the caret is, for the host to share with other people editing. */
+const reportSelection = () => {
+  const offsets = engine.value?.getSelectionOffsets() ?? null;
+  const key = JSON.stringify(offsets);
+  if (key === reportedSelection) return;
+  reportedSelection = key;
+  emit('selectionChange', offsets);
+};
+
+/** Measures collaborator marks again whenever the layout may have moved the text. */
+const collaboratorLayoutKey = computed(
+  () => `${zoom.value}|${viewMode.value}|${pageCount.value}|${JSON.stringify(page.value)}|${fullscreen.value}`
+);
+
 /** Whether the tracked changes panel is open. */
 const changesVisible = ref(false);
 /** Tracked changes shown in the panel. */
@@ -672,6 +749,20 @@ const slashCommands = computed<SlashCommand[]>(() => {
       run: engine => engine.insertHorizontalRule()
     },
     {
+      id: 'sectionLandscape',
+      label: t('editor.sectionBreak.landscape'),
+      icon: 'rectangle-horizontal',
+      keywords: ['albom', 'landscape', 'альбомная', 'bo‘lim', 'section'],
+      run: engine => engine.insertSectionBreak('landscape')
+    },
+    {
+      id: 'sectionPortrait',
+      label: t('editor.sectionBreak.portrait'),
+      icon: 'rectangle-vertical',
+      keywords: ['kitob', 'portrait', 'книжная', 'bo‘lim', 'section'],
+      run: engine => engine.insertSectionBreak('portrait')
+    },
+    {
       id: 'pageBreak',
       label: t('editor.pageBreak'),
       icon: 'square-split-vertical',
@@ -771,6 +862,9 @@ const onMenu = (action: DocumentMenuAction) => {
     case 'exportWord':
       void exportDocument('word');
       break;
+    case 'exportPdf':
+      void exportDocument('pdf');
+      break;
     case 'importWord':
       wordInputRef.value?.click();
       break;
@@ -834,7 +928,9 @@ const fitWidth = () => {
 /** Shrinks the page to fit narrow canvases, never above actual size, until the user picks zoom. */
 const applyAutoZoom = () => {
   if (!autoZoom || !canvasWidth || viewMode.value !== 'page') return;
-  const fitting = Math.floor((canvasWidth / metrics.value.width) * ACTUAL_SIZE_ZOOM);
+  // The widest sheet has to fit; a section break can turn some sheets wider than the document's own.
+  const widest = Math.max(metrics.value.width, ...currentSheets().map(sheet => sheet.width));
+  const fitting = Math.floor((canvasWidth / widest) * ACTUAL_SIZE_ZOOM);
   zoom.value = Math.min(ACTUAL_SIZE_ZOOM, Math.max(ZOOM_MIN, fitting));
 };
 
@@ -884,15 +980,17 @@ watch(model, value => {
   clearTimeout(modelTimer);
   dirty = false;
   lastEmitted = value;
-  instance.setContent(value);
+  // Someone else's version of the document keeps the local caret where it was.
+  instance.setContent(value, { keepSelection: true });
   refreshStats();
   pagination?.schedule();
   scheduleOutlineRefresh();
   syncComments();
 });
 
-/** Page numbers in the navigation panel follow the layout. */
-watch([pageCount, viewMode, () => page.value.firstPageNumber], scheduleOutlineRefresh);
+/** Page numbers and thumbnails in the navigation panel follow the layout and the chosen list. */
+watch([pageCount, viewMode, metrics, () => page.value.firstPageNumber], scheduleOutlineRefresh);
+watch(outlineView, refreshOutline);
 
 /** Keeps the engine's editability in sync with the `disabled` prop. */
 watch(
@@ -909,8 +1007,8 @@ watch([metrics, viewMode], ([nextMetrics, mode]) => pagination?.setMetrics(mode 
 /** The current page depends on pagination, zoom, and view mode. */
 watch([pageCount, zoom, viewMode], scheduleUiSync);
 
-/** Paper or view changes can make the page too wide for the canvas again. */
-watch([metrics, viewMode], applyAutoZoom);
+/** Paper, view or section changes can make a page too wide for the canvas again. */
+watch([metrics, viewMode, sheetGeometry], applyAutoZoom);
 
 /** Enters or leaves fullscreen: picks the teleport target and locks page scrolling. */
 watch(fullscreen, value => {
@@ -947,6 +1045,9 @@ onMounted(() => {
     onFootnotes: sheets => {
       footnotePages.value = sheets;
     },
+    onSheets: sheets => {
+      sheetGeometry.value = sheets;
+    },
     isComposing: () => instance.composing
   });
   pagination.setMetrics(viewMode.value === 'page' ? metrics.value : null);
@@ -958,7 +1059,10 @@ onMounted(() => {
       syncComments();
       refreshChanges();
     }),
-    instance.on('selection', scheduleUiSync),
+    instance.on('selection', () => {
+      scheduleUiSync();
+      reportSelection();
+    }),
     instance.on('composition', active => {
       if (!active) pagination?.schedule();
     }),
@@ -994,6 +1098,8 @@ defineExpose({
   exportHtml: () => exportDocument('html'),
   /** Downloads the document as a Word-compatible file. */
   exportWord: () => exportDocument('word'),
+  /** Downloads the document as a PDF drawn from its pages. */
+  exportPdf: () => exportDocument('pdf'),
   /** Moves keyboard focus into the document. */
   focus: () => engine.value?.focus(),
   /** Returns the document HTML, including edits not yet written to the model. */
@@ -1058,6 +1164,7 @@ defineExpose({
           :document-title="title || t('editor.document')"
           :engine="engine"
           :footnotes="footnotePages"
+          :sheets="sheetGeometry"
           :indents="{ left: uiState.indentLeft, right: uiState.indentRight, firstLine: uiState.indentFirstLine }"
           :metrics="metrics"
           :page="page"
@@ -1078,6 +1185,14 @@ defineExpose({
           :aria-label="t('editor.source')"
           :readonly="disabled"
         />
+        <EditorCollaborators
+          v-if="engine && bodyRef && canvasScroll && collaborators.length && !sourceMode"
+          :collaborators="collaborators"
+          :container="bodyRef"
+          :engine="engine"
+          :layout-key="collaboratorLayoutKey"
+          :scroll-target="canvasScroll"
+        />
         <EditorSlashMenu
           v-if="engine && bodyRef && !disabled && !sourceMode"
           :commands="slashCommands"
@@ -1096,9 +1211,15 @@ defineExpose({
         />
         <EditorOutline
           v-if="engine && outlineVisible && !sourceMode"
+          v-model:view="outlineView"
+          :first-page-number="page.firstPageNumber ?? 1"
           :headings="outline"
+          :metrics="metrics"
+          :pages="outlinePages"
+          :sheets="currentSheets()"
           @close="outlineVisible = false"
           @select="engine.goToHeading($event)"
+          @select-page="goToPage"
         />
         <EditorChanges
           v-if="engine && changesVisible && !sourceMode"

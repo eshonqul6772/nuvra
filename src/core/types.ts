@@ -6,6 +6,7 @@ export type DocumentMenuAction =
   | 'print'
   | 'exportHtml'
   | 'exportWord'
+  | 'exportPdf'
   | 'importWord'
   | 'formattingMarks'
   | 'ruler'

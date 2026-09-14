@@ -14,6 +14,9 @@ export interface OutlineHeading {
   element: HTMLElement;
 }
 
+/** What the navigation panel lists: the headings, or thumbnails of the pages. */
+export type OutlineView = 'headings' | 'pages';
+
 /** A line of the table of contents. */
 export interface TableOfContentsEntry {
   /** Heading level, 1 to 6; deeper levels are indented. */

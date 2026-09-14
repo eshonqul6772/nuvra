@@ -24,6 +24,8 @@ interface DocumentSnapshot {
    * with real page numbers and breaks the pages exactly where the editor shows them.
    */
   pages?: string[];
+  /** For every sheet of `pages`, whether a section break turned it against the document's orientation. */
+  rotated?: boolean[];
   /** Footnotes of every sheet of `pages`; without pages, the notes of all of them are printed after the document. */
   footnotes?: SheetFootnote[][];
   /** Document title, used for the print title and file names. */
@@ -62,7 +64,7 @@ const HIDDEN_FRAME_STYLE: Partial<CSSStyleDeclaration> = {
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, character => HTML_ESCAPES[character] ?? character);
 
 /** Paper width and height in millimetres, in the chosen orientation. */
-const paperSize = ({ size, orientation }: PageSettings) => {
+export const paperSize = ({ size, orientation }: PageSettings) => {
   const paper = PAGE_SIZES[size] ?? PAGE_SIZES.a4;
   const portrait = orientation === 'portrait';
   return { width: portrait ? paper.width : paper.height, height: portrait ? paper.height : paper.width };
@@ -116,7 +118,13 @@ const watermarkCss = (page: PageSettings, fixed: boolean): string => {
 };
 
 /** Sheets with their own header and footer, used when the editor knows where the pages break. */
-const sheetsHtml = (pages: string[], page: PageSettings, title: string, footnotes: SheetFootnote[][] = []): string =>
+const sheetsHtml = (
+  pages: string[],
+  page: PageSettings,
+  title: string,
+  footnotes: SheetFootnote[][] = [],
+  rotated: boolean[] = []
+): string =>
   pages
     .map((content, index) => {
       const context: HeaderFooterContext = { page: pageNumberOf(page, index + 1), pages: pages.length, title };
@@ -127,7 +135,8 @@ const sheetsHtml = (pages: string[], page: PageSettings, title: string, footnote
       const notes = footnotes[index]?.length
         ? `<div class="doc-sheet__notes">${footnotesHtml(footnotes[index] ?? [])}</div>`
         : '';
-      return `<section class="doc-sheet">${watermark}${header}<article class="doc-content">${content}</article>${notes}${footer}</section>`;
+      const className = rotated[index] ? 'doc-sheet is-rotated' : 'doc-sheet';
+      return `<section class="${className}">${watermark}${header}<article class="doc-content">${content}</article>${notes}${footer}</section>`;
     })
     .join('');
 
@@ -138,6 +147,8 @@ const sheetCss = (page: PageSettings) => {
   return `@page { size: ${width}mm ${height}mm; margin: 0; }
 .doc-sheet { position: relative; box-sizing: border-box; width: ${width}mm; min-height: ${height}mm; padding: ${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm; overflow: hidden; background: #fff; break-after: page; }
 .doc-sheet:last-child { break-after: auto; }
+@page rotated { size: ${height}mm ${width}mm; margin: 0; }
+.doc-sheet.is-rotated { width: ${height}mm; min-height: ${width}mm; page: rotated; }
 .doc-running { position: absolute; right: ${margins.right}mm; left: ${margins.left}mm; }
 .doc-sheet__notes { position: absolute; right: ${margins.right}mm; bottom: ${margins.bottom}mm; left: ${margins.left}mm; }
 .doc-running--header { top: ${runningEdge(margins.top)}mm; }
@@ -163,7 +174,7 @@ export const toFileName = (title: string): string =>
  * the pages break where the editor shows them; without them the document flows and the browser repeats one fixed
  * header and footer on every page.
  */
-export const buildPrintableHtml = ({ html, pages, footnotes, title, page }: DocumentSnapshot): string => {
+export const buildPrintableHtml = ({ html, pages, rotated, footnotes, title, page }: DocumentSnapshot): string => {
   const paginated = pages !== undefined && pages.length > 0;
   const context: HeaderFooterContext = { page: 1, pages: 1, title };
   const flow = `${watermarkHtml(page.watermark)}${runningHtml(page.header, 'header', context)}${runningHtml(page.footer, 'footer', context)}<article class="doc-content">${html}</article>${footnotesHtml(footnotes?.flat() ?? [])}`;
@@ -174,7 +185,7 @@ export const buildPrintableHtml = ({ html, pages, footnotes, title, page }: Docu
 <title>${escapeHtml(title)}</title>
 <style>${paginated ? sheetCss(page) : flowCss(page)} html, body { margin: 0; background: #fff; } ${contentCss}</style>
 </head>
-<body>${paginated && pages ? sheetsHtml(pages, page, title, footnotes) : flow}</body>
+<body>${paginated && pages ? sheetsHtml(pages, page, title, footnotes, rotated) : flow}</body>
 </html>`;
 };
 

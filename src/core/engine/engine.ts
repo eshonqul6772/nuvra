@@ -42,7 +42,9 @@ import {
   createElement,
   createFootnote,
   createParagraph,
+  createSectionBreak,
   createVariable,
+  isBreakBlock,
   isEmptyTextBlock,
   isText,
   isTextBlock,
@@ -425,16 +427,62 @@ export class DocumentEngine {
    * @param options.addToHistory Record the replacement as an undo step instead of clearing the history.
    * @param options.emitUpdate Emit `update` so the host saves the new content.
    */
-  setContent(html: string, { addToHistory = false, emitUpdate = false } = {}): void {
+  setContent(html: string, { addToHistory = false, emitUpdate = false, keepSelection = false } = {}): void {
     const before = addToHistory ? this.snapshot() : null;
+    // A document replaced by someone else keeps the caret at the same character position.
+    const bookmark = keepSelection && document.activeElement === this.root ? saveBookmark(this.root) : null;
     this.root.replaceChildren(sanitizeHtml(html));
     normalizeContainer(this.root, true);
+    if (bookmark) {
+      this.expectInternalSelection();
+      restoreBookmark(this.root, bookmark);
+    }
     if (before) this.history.record(() => before, 'command');
     else this.history.clear();
     this.pending = null;
     this.selectImage(null);
     this.clearCellSelection();
     this.refresh(emitUpdate);
+  }
+
+  /**
+   * The selection as character positions through the document: `anchor` where selecting started, `focus` where the
+   * caret is. Positions survive changes to the markup, so they can be sent to other people editing the document.
+   */
+  getSelectionOffsets(): TextBookmark | null {
+    const range = getRangeWithin(this.root) ?? this.lastRange;
+    if (!range || !this.root.contains(range.startContainer)) return null;
+    return saveBookmark(this.root) ?? rangeToBookmark(this.root, range);
+  }
+
+  /**
+   * Viewport rectangles of the text between two character positions, for drawing someone else's selection; a
+   * collapsed position gives the rectangle of its caret line with no width.
+   */
+  getOffsetRects(offsets: TextBookmark): DOMRect[] {
+    const length = this.characterPositions();
+    const clamp = (value: number) => Math.max(0, Math.min(length, value));
+    const from = clamp(Math.min(offsets.anchor, offsets.focus));
+    const to = clamp(Math.max(offsets.anchor, offsets.focus));
+    const range = bookmarkToRange(this.root, { anchor: from, focus: to });
+    if (!range.collapsed) return Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0);
+    const caret = range.getClientRects()[0] ?? range.getBoundingClientRect();
+    if (caret && caret.height > 0) return [new DOMRect(caret.left, caret.top, 0, caret.height)];
+    // An empty line has no text to measure; its block gives the position and a line height.
+    const container = range.startContainer;
+    const element = container instanceof Element ? container : container.parentElement;
+    const box = element?.getBoundingClientRect();
+    if (!box || !element) return [];
+    const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight) || box.height;
+    return [new DOMRect(box.left, box.top, 0, Math.min(lineHeight, box.height || lineHeight))];
+  }
+
+  /** Number of character positions in the document, the largest offset a selection can have. */
+  private characterPositions(): number {
+    const end = document.createRange();
+    end.selectNodeContents(this.root);
+    end.collapse(false);
+    return rangeToBookmark(this.root, end).anchor;
   }
 
   /** Switches between editing and read-only mode. */
@@ -955,7 +1003,7 @@ export class DocumentEngine {
     const broken =
       !this.root.firstChild ||
       Array.from(this.root.childNodes).some(
-        node => !isBlockNode(node) || (node.tagName === 'DIV' && node.getAttribute('data-type') !== 'page-break')
+        node => !isBlockNode(node) || (node.tagName === 'DIV' && !isBreakBlock(node))
       );
     if (broken) {
       const bookmark = saveBookmark(this.root);
@@ -1680,6 +1728,11 @@ export class DocumentEngine {
   /** Inserts a horizontal rule. */
   insertHorizontalRule(): void {
     this.insertBlock(createElement('hr'));
+  }
+
+  /** Inserts a section break: the sheets after it are turned to `orientation`, for example for a wide table. */
+  insertSectionBreak(orientation: 'portrait' | 'landscape'): void {
+    this.insertBlock(createSectionBreak(orientation));
   }
 
   /** Inserts a manual page break. */

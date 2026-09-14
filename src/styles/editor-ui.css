@@ -409,6 +409,16 @@
   pointer-events: none;
 }
 
+/* Page view: blocks of a turned section get the text width of their sheet. */
+.doc-canvas.is-page .doc-content > [data-doc-rotated] {
+  margin-right: var(--rotated-shift, 0px);
+}
+
+/* A table takes its width from the text column, not from its margins, so it is widened explicitly. */
+.doc-canvas.is-page .doc-content > table[data-doc-rotated] {
+  width: calc(100% - var(--rotated-shift, 0px));
+}
+
 /* Editable document: manual page break drawn as a dashed line labelled with --page-break-label. */
 .doc-canvas .doc-content .doc-page-break {
   position: relative;
@@ -441,6 +451,20 @@
   text-transform: uppercase;
   content: var(--page-break-label);
   transform: translate(-50%, -50%);
+}
+
+/* Section breaks say which way the following sheets are turned. */
+.doc-canvas .doc-content .doc-section-break::before {
+  border-top-style: double;
+  border-top-width: 3px;
+}
+
+.doc-canvas .doc-content .doc-section-break[data-orientation="landscape"]::after {
+  content: var(--section-landscape-label);
+}
+
+.doc-canvas .doc-content .doc-section-break[data-orientation="portrait"]::after {
+  content: var(--section-portrait-label);
 }
 
 /* Editable document: table cell selection and column resizing. */

@@ -1,7 +1,59 @@
 import { FOOTNOTE_ATTRIBUTE, FOOTNOTE_SELECTOR } from './engine/dom';
-import { GAP_ATTRIBUTE, SPACE_BEFORE_ATTRIBUTE, cleanEditorArtifacts } from './engine/schema';
+import { GAP_ATTRIBUTE, ROTATED_ATTRIBUTE, SPACE_BEFORE_ATTRIBUTE, cleanEditorArtifacts } from './engine/schema';
 import { type SheetFootnote, footnotesHtml } from './footnotes';
-import type { PageMetrics } from './page';
+import type { PageMetrics, PageOrientation } from './page';
+
+/** Where a sheet is drawn and which way it is turned. */
+export interface SheetGeometry {
+  /** Distance of the sheet from the top of the first sheet, in pixels. */
+  top: number;
+  /** Sheet width in pixels. */
+  width: number;
+  /** Sheet height in pixels. */
+  height: number;
+  /** Orientation of the sheet. */
+  orientation: PageOrientation;
+  /** Whether the sheet is turned against the document's own orientation, by a section break. */
+  rotated: boolean;
+}
+
+/** Orientation page metrics describe: wider than high is landscape. */
+const orientationOf = (metrics: Pick<PageMetrics, 'width' | 'height'>): PageOrientation =>
+  metrics.width > metrics.height ? 'landscape' : 'portrait';
+
+/** Whether a block is a section break, which starts a new sheet in its own orientation. */
+const isSectionBreak = (element: Element) => element.getAttribute('data-type') === 'section-break';
+
+/** Whether a block starts the next sheet after it: a page break or a section break. */
+const breaksPage = (element: Element) => {
+  const type = element.getAttribute('data-type');
+  return type === 'page-break' || type === 'section-break';
+};
+
+/**
+ * Orientation of the section every block belongs to: a section break turns the blocks after it; the break itself
+ * still belongs to the section it ends.
+ */
+const blockOrientations = (children: HTMLElement[], base: PageOrientation): PageOrientation[] => {
+  let current = base;
+  return children.map(child => {
+    const orientation = current;
+    if (isSectionBreak(child))
+      current = child.getAttribute('data-orientation') === 'landscape' ? 'landscape' : 'portrait';
+    return orientation;
+  });
+};
+
+/**
+ * Marks the blocks of turned sections, so the editor's styles give them the text width of their sheets before they
+ * are measured. Only changed marks touch the DOM, and a document without section breaks has none.
+ */
+const markRotatedBlocks = (children: HTMLElement[], orientations: PageOrientation[], base: PageOrientation) => {
+  children.forEach((child, index) => {
+    const rotated = orientations[index] !== base;
+    if (rotated !== child.hasAttribute(ROTATED_ATTRIBUTE)) child.toggleAttribute(ROTATED_ATTRIBUTE, rotated);
+  });
+};
 
 /** Handle returned by {@link createPagination}. */
 export interface PaginationController {
@@ -19,6 +71,8 @@ interface PaginationOptions {
   onPageCount: (count: number) => void;
   /** Receives the footnotes of every sheet whenever they change; the web view is one sheet holding all of them. */
   onFootnotes?: (sheets: SheetFootnote[][]) => void;
+  /** Receives the position, size and orientation of every sheet whenever they change; empty in the web view. */
+  onSheets?: (sheets: SheetGeometry[]) => void;
   /** Whether an IME composition is in progress, during which blocks must not move. */
   isComposing: () => boolean;
 }
@@ -66,6 +120,8 @@ interface Layout {
   pageCount: number;
   /** Footnotes of every sheet, in sheet order. */
   footnotes: SheetFootnote[][];
+  /** Position, size and orientation of every sheet; empty when the document is not paginated. */
+  sheets: SheetGeometry[];
 }
 
 /** Texts of the footnote references inside every top-level block, in document order. */
@@ -89,10 +145,38 @@ const numberFootnotes = (blocks: string[][]): SheetFootnote[][] => {
  * @param measureNotes Height the notes block of the given footnotes takes on a sheet.
  */
 const paginate = (root: HTMLElement, page: PageMetrics, measureNotes: (notes: SheetFootnote[]) => number): Layout => {
-  const period = page.height + page.gap;
-  const contentStart = (index: number) => Math.round(index * period + page.marginTop);
-  const contentEnd = (index: number) => Math.round(index * period + page.height - page.marginBottom);
   const children = Array.from(root.children) as HTMLElement[];
+  const base = orientationOf(page);
+  const orientations = blockOrientations(children, base);
+  markRotatedBlocks(children, orientations, base);
+
+  // Sheets are added as the blocks reach them; a turned sheet swaps width and height and keeps the margins.
+  const sheets: SheetGeometry[] = [];
+  const sheetAt = (index: number, orientation: PageOrientation): SheetGeometry => {
+    while (sheets.length <= index) {
+      const previous = sheets.at(-1);
+      const rotated = (sheets.length === index ? orientation : (previous?.orientation ?? base)) !== base;
+      sheets.push({
+        top: previous ? previous.top + previous.height + page.gap : 0,
+        width: rotated ? page.height : page.width,
+        height: rotated ? page.width : page.height,
+        orientation: rotated ? (base === 'portrait' ? 'landscape' : 'portrait') : base,
+        rotated
+      });
+    }
+    return sheets[index] as SheetGeometry;
+  };
+  let sheetOrientation = orientations[0] ?? base;
+  /** Top of the text area of the sheet after `index`, measured without creating that sheet yet. */
+  const nextContentStart = (index: number) => {
+    const sheet = sheetAt(index, sheetOrientation);
+    return Math.round(sheet.top + sheet.height + page.gap + page.marginTop);
+  };
+  const contentStart = (index: number) => Math.round(sheetAt(index, sheetOrientation).top + page.marginTop);
+  const contentEnd = (index: number) => {
+    const sheet = sheetAt(index, sheetOrientation);
+    return Math.round(sheet.top + sheet.height - page.marginBottom);
+  };
   const blockNotes = numberFootnotes(readBlockFootnotes(children));
   const sheetNotes: SheetFootnote[][] = [];
   /** Bottom of the text area of a sheet once the notes of the sheet, plus `extra`, are drawn under it. */
@@ -121,6 +205,9 @@ const paginate = (root: HTMLElement, page: PageMetrics, measureNotes: (notes: Sh
   measured.forEach(({ element, top: naturalTop, height }, index) => {
     let top = naturalTop + added;
     const notes = blockNotes[index] ?? [];
+    // A sheet takes the orientation of the block that opens it; orientations only change after a section break,
+    // which always opens a new sheet.
+    sheetOrientation = orientations[index] ?? base;
     if (
       top > contentStart(pageIndex) + EPSILON &&
       (breakBefore || top + height > textEnd(pageIndex, notes) + EPSILON)
@@ -141,15 +228,39 @@ const paginate = (root: HTMLElement, page: PageMetrics, measureNotes: (notes: Sh
     }
     gaps.push(gap);
     // A block taller than the text area runs on over the following sheets.
-    while (top + height > textEnd(pageIndex) + EPSILON && top + height > contentStart(pageIndex + 1)) pageIndex += 1;
-    breakBefore = element.getAttribute('data-type') === 'page-break';
+    while (top + height > textEnd(pageIndex) + EPSILON && top + height > nextContentStart(pageIndex)) pageIndex += 1;
+    breakBefore = breaksPage(element);
   });
 
   children.forEach((element, index) => {
     writeGap(element, gaps[index] ?? 0);
   });
   const pageCount = pageIndex + 1;
-  return { pageCount, footnotes: Array.from({ length: pageCount }, (_, index) => sheetNotes[index] ?? []) };
+  sheetAt(pageIndex, sheetOrientation);
+  return {
+    pageCount,
+    footnotes: Array.from({ length: pageCount }, (_, index) => sheetNotes[index] ?? []),
+    sheets: sheets.slice(0, pageCount)
+  };
+};
+
+/** Sheets of a document without section breaks, all alike. */
+export const uniformSheets = (metrics: PageMetrics, count: number): SheetGeometry[] =>
+  Array.from({ length: Math.max(1, count) }, (_, index) => ({
+    top: index * (metrics.height + metrics.gap),
+    width: metrics.width,
+    height: metrics.height,
+    orientation: orientationOf(metrics),
+    rotated: false
+  }));
+
+/** Index of the sheet a vertical position falls on, counted from the top of the first sheet. */
+export const sheetIndexAt = (sheets: readonly SheetGeometry[], offset: number): number => {
+  let index = 0;
+  sheets.forEach((sheet, candidate) => {
+    if (sheet.top <= offset + EPSILON) index = candidate;
+  });
+  return index;
 };
 
 /**
@@ -157,13 +268,17 @@ const paginate = (root: HTMLElement, page: PageMetrics, measureNotes: (notes: Sh
  * moved every block onto its page, so a block belongs to the page its top falls on; blocks taller than a page stay
  * whole, exactly as they are shown on screen. Footnote references keep their document-wide numbers.
  */
-export const splitIntoPages = (root: HTMLElement, metrics: PageMetrics, pageCount: number): string[] => {
-  const period = metrics.height + metrics.gap;
+export const splitIntoPages = (
+  root: HTMLElement,
+  metrics: PageMetrics,
+  pageCount: number,
+  geometry: readonly SheetGeometry[] = uniformSheets(metrics, pageCount)
+): string[] => {
   const sheets: HTMLElement[][] = Array.from({ length: Math.max(1, pageCount) }, () => []);
   for (const child of Array.from(root.children) as HTMLElement[]) {
-    // Manual page breaks are already expressed by the split itself.
-    if (child.getAttribute('data-type') === 'page-break') continue;
-    const index = Math.min(sheets.length - 1, Math.max(0, Math.floor((child.offsetTop + EPSILON) / period)));
+    // Page and section breaks are already expressed by the split itself.
+    if (breaksPage(child)) continue;
+    const index = Math.min(sheets.length - 1, sheetIndexAt(geometry, child.offsetTop));
     sheets[index]?.push(child);
   }
   let firstFootnote = 1;
@@ -183,7 +298,7 @@ const clearGaps = (root: HTMLElement): Layout => {
     writeGap(element, 0);
   }
   const notes = numberFootnotes(readBlockFootnotes(Array.from(root.children) as HTMLElement[])).flat();
-  return { pageCount: SINGLE_PAGE, footnotes: [notes] };
+  return { pageCount: SINGLE_PAGE, footnotes: [notes], sheets: [] };
 };
 
 /**
@@ -196,6 +311,8 @@ export const createPagination = (root: HTMLElement, options: PaginationOptions):
   let pageCount = SINGLE_PAGE;
   /** Footnotes last reported, serialised, so unchanged footnotes are not reported again. */
   let footnotesKey = '';
+  /** Sheet geometry last reported, serialised. */
+  let sheetsKey = '';
   /** Hidden notes block the notes of a sheet are measured with. */
   let probe: HTMLElement | null = null;
   const notesHeights = new Map<string, number>();
@@ -235,6 +352,11 @@ export const createPagination = (root: HTMLElement, options: PaginationOptions):
     if (key !== footnotesKey) {
       footnotesKey = key;
       options.onFootnotes?.(layout.footnotes);
+    }
+    const sheets = JSON.stringify(layout.sheets);
+    if (sheets !== sheetsKey) {
+      sheetsKey = sheets;
+      options.onSheets?.(layout.sheets);
     }
   };
 

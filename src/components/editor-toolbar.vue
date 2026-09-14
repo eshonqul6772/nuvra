@@ -384,6 +384,12 @@ const insertBlock = (command: unknown) => {
     case 'pageBreak':
       props.engine.insertPageBreak();
       break;
+    case 'sectionLandscape':
+      props.engine.insertSectionBreak('landscape');
+      break;
+    case 'sectionPortrait':
+      props.engine.insertSectionBreak('portrait');
+      break;
     case 'date':
       props.engine.insertText(formatShortDate(new Date()));
       break;
@@ -428,6 +434,9 @@ const insertSignature = (command: unknown) =>
 
 /** Forwards a document menu choice to the editor. */
 const onMenuCommand = (command: unknown) => emit('menu', command as DocumentMenuAction);
+
+/** Whether a review tool is on: tracking, or the changes or comments panel. */
+const reviewActive = computed(() => props.trackChanges || props.changesVisible || props.commentsVisible);
 
 /** Fills the link form from the link under the caret before the popover opens. */
 const prepareLink = () => {
@@ -1105,6 +1114,14 @@ defineExpose({
             {{ t('editor.pageBreak') }}
             <span class="doc-menu__hint">{{ formatShortcut('Mod+Enter') }}</span>
           </EditorDropdownItem>
+          <EditorDropdownItem command="sectionLandscape">
+            <EditorIcon name="rectangle-horizontal" :size="14" />
+            {{ t('editor.sectionBreak.landscape') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="sectionPortrait">
+            <EditorIcon name="rectangle-vertical" :size="14" />
+            {{ t('editor.sectionBreak.portrait') }}
+          </EditorDropdownItem>
           <EditorDropdownItem command="horizontalRule">
             <EditorIcon name="separator-horizontal" :size="14" />
             {{ t('editor.horizontalRule') }}
@@ -1138,56 +1155,40 @@ defineExpose({
     <div class="doc-toolbar__group doc-toolbar__group--end">
       <!-- Buttons the host application adds to the toolbar. -->
       <slot />
-      <button
-        type="button"
-        class="doc-tb-button"
-        :class="{ 'is-active': trackChanges }"
-        :aria-label="t('editor.track')"
-        :aria-pressed="trackChanges"
-        :disabled="locked"
-        :title="t('editor.track')"
-        @mousedown.prevent
-        @click="emit('menu', 'trackChanges')"
-      >
-        <EditorIcon name="pencil" :size="16" />
-      </button>
-      <button
-        type="button"
-        class="doc-tb-button"
-        :class="{ 'is-active': changesVisible }"
-        :aria-label="t('editor.changes')"
-        :aria-pressed="changesVisible"
-        :title="t('editor.changes')"
-        @mousedown.prevent
-        @click="emit('menu', 'changes')"
-      >
-        <EditorIcon name="list-checks" :size="16" />
-      </button>
-      <template v-if="commentsEnabled">
+      <EditorDropdown placement="bottom-end" @command="onMenuCommand">
         <button
           type="button"
-          class="doc-tb-button"
-          :aria-label="t('editor.comment.add')"
-          :disabled="locked || !state.textSelected"
-          :title="t('editor.comment.add')"
+          class="doc-tb-button doc-tb-button--select"
+          :class="{ 'is-active': reviewActive }"
+          :aria-label="t('editor.review')"
+          :title="t('editor.review')"
           @mousedown.prevent
-          @click="emit('menu', 'addComment')"
-        >
-          <EditorIcon name="message-square-plus" :size="16" />
-        </button>
-        <button
-          type="button"
-          class="doc-tb-button"
-          :class="{ 'is-active': commentsVisible }"
-          :aria-label="t('editor.comments')"
-          :aria-pressed="commentsVisible"
-          :title="t('editor.comments')"
-          @mousedown.prevent
-          @click="emit('menu', 'comments')"
         >
           <EditorIcon name="message-square" :size="16" />
+          <EditorIcon name="chevron-down" :size="12" />
         </button>
-      </template>
+        <template #menu>
+          <EditorDropdownItem command="trackChanges" :disabled="locked" :class="{ 'is-selected': trackChanges }">
+            <EditorIcon name="pencil" :size="14" />
+            {{ t('editor.track') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="changes" :class="{ 'is-selected': changesVisible }">
+            <EditorIcon name="list-checks" :size="14" />
+            {{ t('editor.changes') }}
+          </EditorDropdownItem>
+          <template v-if="commentsEnabled">
+            <EditorDropdownItem command="addComment" divided :disabled="locked || !state.textSelected">
+              <EditorIcon name="message-square-plus" :size="14" />
+              {{ t('editor.comment.add') }}
+              <span class="doc-menu__hint">{{ formatShortcut('Mod+Alt+M') }}</span>
+            </EditorDropdownItem>
+            <EditorDropdownItem command="comments" :class="{ 'is-selected': commentsVisible }">
+              <EditorIcon name="message-square" :size="14" />
+              {{ t('editor.comments') }}
+            </EditorDropdownItem>
+          </template>
+        </template>
+      </EditorDropdown>
       <button
         type="button"
         class="doc-tb-button"
@@ -1265,6 +1266,10 @@ defineExpose({
             <EditorIcon name="printer" :size="14" />
             {{ t('editor.print') }}
             <span class="doc-menu__hint">{{ formatShortcut('Mod+P') }}</span>
+          </EditorDropdownItem>
+          <EditorDropdownItem command="exportPdf">
+            <EditorIcon name="file-down" :size="14" />
+            {{ t('editor.exportPdf') }}
           </EditorDropdownItem>
           <EditorDropdownItem command="exportWord">
             <EditorIcon name="file-type" :size="14" />

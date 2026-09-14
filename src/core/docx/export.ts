@@ -664,16 +664,45 @@ export const buildDocx = async ({ html, title, page }: DocxSource): Promise<Blob
   const parts = writer.fixedParts(hasHeader, hasFooter);
 
   const parsed = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
-  const body = await writer.blocks(parsed.body);
+
+  // Section breaks split the document into Word sections; each section is written with its own orientation.
+  const segments: Array<{ container: HTMLElement; orientation: PageSettings['orientation'] }> = [
+    { container: parsed.createElement('div'), orientation: page.orientation }
+  ];
+  for (const node of Array.from(parsed.body.childNodes)) {
+    if (node.nodeType === Node.ELEMENT_NODE && (node as Element).getAttribute('data-type') === 'section-break') {
+      const orientation = (node as Element).getAttribute('data-orientation') === 'landscape' ? 'landscape' : 'portrait';
+      segments.push({ container: parsed.createElement('div'), orientation });
+      continue;
+    }
+    segments.at(-1)?.container.append(node);
+  }
+
+  const references = `${parts.header ? `<w:headerReference w:type="default" r:id="${parts.header}"/>` : ''}${parts.footer ? `<w:footerReference w:type="default" r:id="${parts.footer}"/>` : ''}`;
+  const firstNumber = page.firstPageNumber ?? 1;
+  /** Section properties of one section; the title page and the first page number belong to the first section. */
+  const sectionXml = (orientation: PageSettings['orientation'], first: boolean) => {
+    const turned = orientation !== page.orientation;
+    const sheetWidth = turned ? height : width;
+    const sheetHeight = turned ? width : height;
+    const orient = orientation === 'landscape' ? ' w:orient="landscape"' : '';
+    // Page numbering and the title page follow the margins in the schema order of section properties.
+    const numbering = first && firstNumber !== 1 ? `<w:pgNumType w:start="${firstNumber}"/>` : '';
+    const titlePage = first && page.differentFirstPage ? '<w:titlePg/>' : '';
+    return `<w:sectPr>${references}<w:pgSz w:w="${toTwips(sheetWidth)}" w:h="${toTwips(sheetHeight)}"${orient}/><w:pgMar w:top="${toTwips(margins.top)}" w:right="${toTwips(margins.right)}" w:bottom="${toTwips(margins.bottom)}" w:left="${toTwips(margins.left)}" w:header="${toTwips(margins.top / 2)}" w:footer="${toTwips(margins.bottom / 2)}" w:gutter="0"/>${numbering}${titlePage}</w:sectPr>`;
+  };
+
+  let body = '';
+  for (const [index, segment] of segments.entries()) {
+    body += await writer.blocks(segment.container);
+    // Word ends every section but the last with a paragraph that carries the section's properties.
+    if (index < segments.length - 1)
+      body += `<w:p><w:pPr>${sectionXml(segment.orientation, index === 0)}</w:pPr></w:p>`;
+  }
+  const lastSegment = segments.at(-1) ?? segments[0];
+  const section = sectionXml(lastSegment?.orientation ?? page.orientation, segments.length === 1);
   writer.relateFootnotes();
   const hasFootnotes = writer.footnotes.length > 0;
-  const references = `${parts.header ? `<w:headerReference w:type="default" r:id="${parts.header}"/>` : ''}${parts.footer ? `<w:footerReference w:type="default" r:id="${parts.footer}"/>` : ''}`;
-  const orientation = page.orientation === 'landscape' ? ' w:orient="landscape"' : '';
-  // Page numbering and the title page follow the margins in the schema order of section properties.
-  const firstNumber = page.firstPageNumber ?? 1;
-  const numbering = firstNumber === 1 ? '' : `<w:pgNumType w:start="${firstNumber}"/>`;
-  const titlePage = page.differentFirstPage ? '<w:titlePg/>' : '';
-  const section = `<w:sectPr>${references}<w:pgSz w:w="${toTwips(width)}" w:h="${toTwips(height)}"${orientation}/><w:pgMar w:top="${toTwips(margins.top)}" w:right="${toTwips(margins.right)}" w:bottom="${toTwips(margins.bottom)}" w:left="${toTwips(margins.left)}" w:header="${toTwips(margins.top / 2)}" w:footer="${toTwips(margins.bottom / 2)}" w:gutter="0"/>${numbering}${titlePage}</w:sectPr>`;
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="${NS_W}" xmlns:r="${NS_R}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>${body}${section}</w:body></w:document>`;
 
   const encoder = new TextEncoder();

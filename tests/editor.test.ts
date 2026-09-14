@@ -52,6 +52,21 @@ const clickButton = (host: HTMLElement, label: string) => {
   return button;
 };
 
+/**
+ * Opens the review menu of the toolbar and chooses an entry: the one whose text starts with `label` (entries may show
+ * a shortcut after it), or with `exact` the one whose text is `label`.
+ */
+const chooseReview = async (host: HTMLElement, label: string, exact = false) => {
+  clickButton(host, 'Taqriz: izohlar va o‘zgarishlar');
+  await settle();
+  const item = Array.from(document.querySelectorAll<HTMLButtonElement>('.doc-menu__item')).find(candidate => {
+    const text = candidate.textContent?.trim() ?? '';
+    return exact ? text === label : text.startsWith(label);
+  });
+  if (!item) throw new Error(`No review entry "${label}"`);
+  item.click();
+};
+
 describe('DocumentEditor', () => {
   it('adds, replies to, resolves and deletes a comment', async () => {
     const { host, comments, engine, content, unmount } = await mountEditor('<p>Shartnoma matni</p>');
@@ -66,7 +81,7 @@ describe('DocumentEditor', () => {
     document.dispatchEvent(new Event('selectionchange'));
     await settle();
 
-    clickButton(host, 'Izoh qo‘shish');
+    await chooseReview(host, 'Izoh qo‘shish');
     await settle();
     const textarea = host.querySelector<HTMLTextAreaElement>('.doc-comments textarea');
     expect(textarea).not.toBeNull();
@@ -116,7 +131,7 @@ describe('DocumentEditor', () => {
     document.dispatchEvent(new Event('selectionchange'));
     await settle();
 
-    clickButton(host, 'Izoh qo‘shish');
+    await chooseReview(host, 'Izoh qo‘shish');
     await settle();
     expect(engine.getCommentIds()).toHaveLength(1);
     const cancel = Array.from(host.querySelectorAll<HTMLButtonElement>('.doc-comments button')).find(
@@ -198,7 +213,7 @@ describe('DocumentEditor', () => {
 
   it('tracks changes from the toolbar and accepts them in the panel', async () => {
     const { host, engine, content, unmount } = await mountEditor('<p>10 kun</p>');
-    clickButton(host, 'O‘zgarishlarni kuzatish');
+    await chooseReview(host, 'O‘zgarishlarni kuzatish');
     await settle();
     expect(engine.tracksChanges).toBe(true);
 
@@ -213,7 +228,7 @@ describe('DocumentEditor', () => {
     await settle();
     expect(engine.getHTML()).toMatch(/^<p><del data-change="[^"]+" data-author="Aziz" data-time="[^"]+">10<\/del>/);
 
-    clickButton(host, 'O‘zgarishlar');
+    await chooseReview(host, 'O‘zgarishlar', true);
     await settle();
     expect(Array.from(host.querySelectorAll('.doc-changes__card')).map(card => card.className)).toEqual([
       'doc-changes__card is-delete',
@@ -225,7 +240,7 @@ describe('DocumentEditor', () => {
     expect(host.querySelector('.doc-changes__empty')).not.toBeNull();
     expect(content.value).toBeDefined();
 
-    clickButton(host, 'O‘zgarishlarni kuzatish');
+    await chooseReview(host, 'O‘zgarishlarni kuzatish');
     await settle();
     expect(engine.tracksChanges).toBe(false);
     unmount();

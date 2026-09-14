@@ -1,6 +1,6 @@
 {
   "name": "nuvra",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Word-style document editor for Vue 3: page view, tables, images, find & replace, print and Word export.",
   "keywords": [
     "vue",

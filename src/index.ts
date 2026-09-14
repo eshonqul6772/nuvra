@@ -5,6 +5,8 @@
 
 export { default as DocumentCompare } from './compare.vue';
 export { default as DocumentEditor } from './components/document-editor.vue';
+export type { Collaborator, SelectionOffsets } from './core/collaboration';
+export { collaboratorColor } from './core/collaboration';
 export type { DocumentComment, DocumentCommentReply } from './core/comments';
 export { createCommentId } from './core/comments';
 export { formatLongDate, formatShortDate } from './core/dates';

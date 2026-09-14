@@ -22,6 +22,7 @@ import {
   showsRunningTexts,
   watermarkFontSize
 } from '../core/page';
+import { type SheetGeometry, uniformSheets } from '../core/pagination';
 import EditorObjectOverlay from './editor-object-overlay.vue';
 import EditorRuler from './editor-ruler.vue';
 
@@ -52,6 +53,8 @@ interface Props {
   metrics: PageMetrics;
   /** Number of sheets drawn behind the content in page view. */
   pageCount: number;
+  /** Position, size and orientation of every sheet, as laid out by pagination; empty until the first layout. */
+  sheets: readonly SheetGeometry[];
   /** Whether the ruler is drawn above the sheet; it is only ever shown in the page view. */
   rulerVisible: boolean;
   /** Paginated sheets or a single web sheet. */
@@ -124,29 +127,40 @@ const watermarkText = computed(() =>
   hasWatermarkText(props.page.watermark) ? (props.page.watermark?.text.trim() ?? '') : ''
 );
 
-/** Colour, size and angle of the watermark; it is sized to span the paper. */
-const watermarkStyle = computed(() => {
-  const { metrics } = props;
+/** Colour, size and angle of the watermark on a sheet; it is sized to span that sheet's paper. */
+const watermarkStyle = (sheet: SheetGeometry) => {
   const { watermark } = props.page;
   const diagonal = watermark?.diagonal ?? true;
   return {
     color: watermark?.color,
-    fontSize: px(watermarkFontSize(metrics.width, metrics.height, watermarkText.value, diagonal)),
+    fontSize: px(watermarkFontSize(sheet.width, sheet.height, watermarkText.value, diagonal)),
     transform: diagonal ? `rotate(${WATERMARK_ANGLE}deg)` : undefined
   };
-});
+};
 
 /** Zoom as a scale factor. */
 const scale = computed(() => props.zoom / ACTUAL_SIZE_ZOOM);
-/** Vertical distance from the top of one sheet to the top of the next. */
-const period = computed(() => props.metrics.height + props.metrics.gap);
+
+/** Every sheet to draw: the laid-out geometry, or alike sheets while pagination has not reported yet. */
+const sheetList = computed(() =>
+  props.sheets.length === props.pageCount ? props.sheets : uniformSheets(props.metrics, props.pageCount)
+);
+
+/** Width of the widest sheet; sheets turned by a section break can be wider than the document's own. */
+const widestSheet = computed(() => Math.max(props.metrics.width, ...sheetList.value.map(sheet => sheet.width)));
+
+/** Height from the top of the first sheet to the bottom of the last. */
+const sheetsHeight = computed(() => {
+  const last = sheetList.value.at(-1);
+  return last ? last.top + last.height : props.metrics.height;
+});
 
 /**
  * Unscaled stage width. In web view the sheet always fills the canvas inside its grey padding at any zoom, so it is
  * the viewport width divided by the scale.
  */
 const stageWidth = computed(() =>
-  props.viewMode === 'page' ? props.metrics.width : Math.max(1, viewport.value.width / scale.value)
+  props.viewMode === 'page' ? widestSheet.value : Math.max(1, viewport.value.width / scale.value)
 );
 
 /**
@@ -164,18 +178,23 @@ const webMinHeight = computed(() =>
  * reserves the scaled footprint for scrolling. Page geometry is passed to the content styles as CSS variables.
  */
 const stageStyle = computed(() => {
-  const { metrics, pageCount, viewMode } = props;
+  const { metrics, viewMode } = props;
   return {
     width: px(stageWidth.value),
     minHeight: viewMode === 'web' ? webMinHeight.value : undefined,
     transform: scale.value === 1 ? undefined : `scale(${scale.value})`,
+    '--page-width': px(metrics.width),
     '--page-height': px(metrics.height),
-    '--pages-height': px(pageCount * period.value - metrics.gap),
+    '--pages-height': px(sheetsHeight.value),
+    // Blocks of a turned section get the text width of their sheet by this much less right margin.
+    '--rotated-shift': px(metrics.width - metrics.height),
     '--margin-top': px(metrics.marginTop),
     '--margin-right': px(metrics.marginRight),
     '--margin-bottom': px(metrics.marginBottom),
     '--margin-left': px(metrics.marginLeft),
-    '--page-break-label': JSON.stringify(t('editor.pageBreak'))
+    '--page-break-label': JSON.stringify(t('editor.pageBreak')),
+    '--section-landscape-label': JSON.stringify(t('editor.sectionBreak.landscape')),
+    '--section-portrait-label': JSON.stringify(t('editor.sectionBreak.portrait'))
   };
 });
 
@@ -218,7 +237,7 @@ const onWheel = (event: WheelEvent) => {
 
 /** Zoom percentage at which the page width fills the canvas, or `0` before the canvas has been measured. */
 const getFitWidthZoom = () =>
-  viewport.value.width ? Math.floor((viewport.value.width / props.metrics.width) * ACTUAL_SIZE_ZOOM) : 0;
+  viewport.value.width ? Math.floor((viewport.value.width / widestSheet.value) * ACTUAL_SIZE_ZOOM) : 0;
 
 /** Pending measurement frame; `0` when none is scheduled. */
 let measureFrame = 0;
@@ -290,26 +309,28 @@ defineExpose({
       <div ref="stageRef" class="doc-canvas__stage" :style="stageStyle">
         <div v-if="viewMode === 'page'" class="doc-canvas__sheets" aria-hidden="true">
           <div
-            v-for="index in pageCount"
-            :key="index"
+            v-for="(sheet, sheetIndex) in sheetList"
+            :key="sheetIndex"
             class="doc-canvas__sheet"
-            :style="{ top: px((index - 1) * period) }"
+            :style="{ top: px(sheet.top), width: px(sheet.width), height: px(sheet.height) }"
           >
-            <div v-if="watermarkText" class="doc-canvas__watermark" :style="watermarkStyle">{{ watermarkText }}</div>
+            <div v-if="watermarkText" class="doc-canvas__watermark" :style="watermarkStyle(sheet)">
+              {{ watermarkText }}
+            </div>
             <!-- Note texts are escaped by footnotesHtml. -->
             <div
-              v-if="footnotes[index - 1]?.length"
+              v-if="footnotes[sheetIndex]?.length"
               class="doc-canvas__footnotes"
-              v-html="footnotesHtml(footnotes[index - 1] ?? [])"
+              v-html="footnotesHtml(footnotes[sheetIndex] ?? [])"
             />
-            <template v-if="showsRunningTexts(page, index)">
+            <template v-if="showsRunningTexts(page, sheetIndex + 1)">
               <div v-if="hasHeader" class="doc-canvas__running doc-canvas__running--header">
-                <span v-for="part in RUNNING_PARTS" :key="part">{{ runningText(page.header, part, index) }}</span>
+                <span v-for="part in RUNNING_PARTS" :key="part">{{ runningText(page.header, part, sheetIndex + 1) }}</span>
               </div>
               <div v-if="hasFooter" class="doc-canvas__running doc-canvas__running--footer">
-                <span v-for="part in RUNNING_PARTS" :key="part">{{ runningText(page.footer, part, index) }}</span>
+                <span v-for="part in RUNNING_PARTS" :key="part">{{ runningText(page.footer, part, sheetIndex + 1) }}</span>
               </div>
-              <span v-else class="doc-canvas__page-number">{{ pageNumberOf(page, index) }}</span>
+              <span v-else class="doc-canvas__page-number">{{ pageNumberOf(page, sheetIndex + 1) }}</span>
             </template>
           </div>
         </div>
@@ -378,6 +399,8 @@ defineExpose({
   --margin-bottom: 96px;
   --margin-left: 96px;
   --page-break-label: "";
+  --section-landscape-label: "";
+  --section-portrait-label: "";
 
   position: absolute;
   top: 0;
@@ -501,6 +524,8 @@ defineExpose({
 }
 
 .doc-canvas.is-page .doc-canvas__content {
+  /* The text column keeps the document's own page width even when a turned sheet makes the stage wider. */
+  width: var(--page-width);
   min-height: var(--pages-height);
   padding: var(--margin-top) var(--margin-right) var(--margin-bottom) var(--margin-left);
 }

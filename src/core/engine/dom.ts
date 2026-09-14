@@ -31,8 +31,25 @@ export const INLINE_ATOM_SELECTOR = `${VARIABLE_SELECTOR}, ${FOOTNOTE_SELECTOR}`
 /** Selector matching every mark element, used to scan a subtree for formatting; inline atoms are not marks. */
 const MARK_SELECTOR = `strong, em, u, s, code, sub, sup:not([${FOOTNOTE_ATTRIBUTE}]), a, mark, ins, del, span:not([${VARIABLE_ATTRIBUTE}])`;
 
-/** Selector for blocks without editable text inside: rules, images and page breaks. */
-export const ATOM_SELECTOR = 'hr, img, div[data-type="page-break"]';
+/** Selector for blocks without editable text inside: rules, images, page breaks and section breaks. */
+export const ATOM_SELECTOR = 'hr, img, div[data-type="page-break"], div[data-type="section-break"]';
+
+/** Whether a `<div>` is one of the break blocks the document model keeps: a page break or a section break. */
+export const isBreakBlock = (node: Node | null | undefined): boolean =>
+  isElement(node) &&
+  node.tagName === 'DIV' &&
+  (node.getAttribute('data-type') === 'page-break' || node.getAttribute('data-type') === 'section-break');
+
+/**
+ * Creates a section break: the sheets after it are turned to `orientation`. It also starts a new sheet, so it is drawn
+ * and printed like a page break.
+ */
+export const createSectionBreak = (orientation: 'portrait' | 'landscape'): HTMLDivElement =>
+  createElement('div', {
+    'data-type': 'section-break',
+    'data-orientation': orientation,
+    class: 'doc-page-break doc-section-break'
+  });
 
 /** Selector for blocks that hold editable inline text. */
 export const TEXT_BLOCK_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, pre';

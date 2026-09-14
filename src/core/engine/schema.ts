@@ -13,10 +13,12 @@ import {
   createElement,
   createFootnote,
   createParagraph,
+  createSectionBreak,
   createTrailingBreak,
   createVariable,
   hasVisibleContent,
   isBreak,
+  isBreakBlock,
   isElement,
   isList,
   isText,
@@ -42,6 +44,9 @@ export const VARIABLE_LABEL_ATTRIBUTE = 'data-label';
 
 /** Table kinds kept from loaded or pasted content; signature tables and the table of contents have no borders. */
 const TABLE_TYPES = new Set(['signature', 'toc']);
+
+/** Attribute pagination writes on blocks of a section turned against the document's orientation; editor-only. */
+export const ROTATED_ATTRIBUTE = 'data-doc-rotated';
 
 /** Attribute pagination writes on blocks it moved to the next sheet; editor-only. */
 export const GAP_ATTRIBUTE = 'data-doc-gap';
@@ -401,6 +406,9 @@ const convertNode = (source: Node, preformatted: boolean): Node[] => {
       if (source.getAttribute('data-type') === 'page-break') {
         return [createElement('div', { 'data-type': 'page-break', class: 'doc-page-break' })];
       }
+      if (source.getAttribute('data-type') === 'section-break') {
+        return [createSectionBreak(source.getAttribute('data-orientation') === 'landscape' ? 'landscape' : 'portrait')];
+      }
       const nodes = content();
       if (nodes.some(isBlockNode)) return nodes;
       const block = createElement('p', {}, nodes);
@@ -657,7 +665,8 @@ const normalizeBlock = (block: HTMLElement): void => {
       break;
     case 'DIV':
       block.replaceChildren();
-      block.className = 'doc-page-break';
+      block.className =
+        block.getAttribute('data-type') === 'section-break' ? 'doc-page-break doc-section-break' : 'doc-page-break';
       break;
     default:
       normalizeTextBlock(block);
@@ -666,8 +675,7 @@ const normalizeBlock = (block: HTMLElement): void => {
 
 /** Whether a direct child of a block container is a wrapper that must be unwrapped. */
 const isStrayWrapper = (node: Node): node is HTMLElement =>
-  isElement(node) &&
-  (STRAY_WRAPPERS.has(node.tagName) || (node.tagName === 'DIV' && node.getAttribute('data-type') !== 'page-break'));
+  isElement(node) && (STRAY_WRAPPERS.has(node.tagName) || (node.tagName === 'DIV' && !isBreakBlock(node)));
 
 /**
  * Makes a block container (document, quote, list item body, table cell) hold only well-formed blocks: stray wrappers
@@ -745,6 +753,9 @@ export const cleanEditorArtifacts = (
     else element.style.removeProperty('margin-top');
     element.removeAttribute(GAP_ATTRIBUTE);
     if (!element.getAttribute('style')) element.removeAttribute('style');
+  }
+  for (const element of Array.from(scope.querySelectorAll(`[${ROTATED_ATTRIBUTE}]`))) {
+    element.removeAttribute(ROTATED_ATTRIBUTE);
   }
   for (const element of Array.from(scope.querySelectorAll(`.${SELECTED_CELL_CLASS}`))) {
     element.classList.remove(SELECTED_CELL_CLASS);
