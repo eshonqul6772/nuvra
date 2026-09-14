@@ -17,7 +17,7 @@ import { readZip } from './zip';
 export interface DocxImport {
   /** Document content as HTML. */
   html: string;
-  /** Page setup of the document's last section. */
+  /** Page setup of the document's first section; later sections are section breaks in the HTML. */
   page: PageSettings;
 }
 

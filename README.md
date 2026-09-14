@@ -1,15 +1,16 @@
 # nuvra
 
 Word-style document editor for Vue 3. A real page view with paper sizes and margins, a lighter web view for
-forms, tables, images, lists, find & replace, comments, HTML source mode, printing, export to HTML and Word files
-(`.docx`) you can open again.
+forms, tables, images, lists, find & replace, comments, HTML source mode, printing, PDF download, export to HTML and Word
+files (`.docx`) you can open again.
 
 **[Documentation and live demo →](https://nuvra-docs.vercel.app)**
 
 - No editor framework underneath: its own small editing engine with a sanitizing schema.
 - No UI framework either: native HTML controls, built-in SVG icons and plain CSS variables. Vue is the only
   dependency.
-- Pagination in the page view (A4, A5, Letter, …, portrait or landscape).
+- Pagination in the page view (A4, A5, Letter, …, portrait or landscape), with section breaks for landscape pages inside a
+  portrait document.
 - Tables with merge / split, images with resize and alignment, task lists, links, colors, fonts.
 - Undo / redo, keyboard shortcuts that work with non-Latin keyboard layouts, Markdown-like input rules.
 - Office tools: format painter, letter case, paragraph spacing, formatting marks, a right-click menu and
@@ -18,10 +19,12 @@ forms, tables, images, lists, find & replace, comments, HTML source mode, printi
   the editor shows them, and the Word export uses Word's own header, footer and page fields.
 - A ruler above the page for the margins and for the first line, left and right indents of a paragraph.
 - A page watermark such as DRAFT or COPY, drawn behind the text of every page and carried into print, HTML and Word.
-- Real `.docx` export and import, multilevel (1.1.1) numbering, a table of contents and a navigation pane.
+- Real `.docx` export and import, PDF download without the print dialog, multilevel (1.1.1) numbering, a table of
+  contents and a navigation pane with headings and page thumbnails.
 - Footnotes at the bottom of their page, carried into print and Word.
 - Comments with replies, tracked changes that round-trip with Word, a comparison of two versions, and templates
   filled in as a form.
+- Hooks for editing together: other people's carets and selections, your selection as character positions.
 - A `/` command menu and a toolbar slot for your own commands and buttons.
 
 ## Installation
@@ -103,6 +106,7 @@ const uploadImage: DocumentImageUploadHandler = async file => {
 | `author`          | `string`                          | `''`     | Name written on new comments, replies and tracked changes.                 |
 | `autofocus`       | `boolean`                         | `false`  | Places the caret at the end of the document once ready.                    |
 | `canvasPadding`   | `number \| string`                | `50`     | Gray space around the page or web sheet.                                   |
+| `collaborators`   | `Collaborator[]`                  | `[]`     | Other people editing the document; their carets and selections are drawn.  |
 | `defaultViewMode` | `'page' \| 'web'`                 | `'page'` | View shown first.                                                          |
 | `disabled`        | `boolean`                         | `false`  | Read-only document, disabled controls.                                     |
 | `height`          | `number \| string`                | `760`    | Height of the editor, or `'auto'` to grow between `minHeight`/`maxHeight`. |
@@ -119,18 +123,20 @@ const uploadImage: DocumentImageUploadHandler = async file => {
 | `variables`       | `TemplateVariable[]`              | `[]`     | Template variables the user can insert.                                    |
 
 `Editor` accepts the same props except `v-model:page`, `v-model:comments`, `v-model:trackChanges`, `author`,
-`defaultViewMode`, `height`, `ruler`, `slashCommands` and `title`.
+`collaborators`, `defaultViewMode`, `height`, `ruler`, `slashCommands` and `title`.
 
 Numbers are pixels; strings are used as CSS lengths (`'100%'`, `'50vh'`).
 
 ### Events
 
-| Event         | Payload          | Description                                       |
-| ------------- | ---------------- | ------------------------------------------------- |
-| `focus`       | —                | The document received focus.                      |
-| `blur`        | —                | The document lost focus; the model is up to date. |
-| `uploadError` | `error: unknown` | An image was rejected or its upload failed.       |
-| `importError` | `error: unknown` | A Word file could not be read.                    |
+| Event             | Payload                             | Description                                                    |
+| ----------------- | ----------------------------------- | -------------------------------------------------------------- |
+| `focus`           | —                                   | The document received focus.                                   |
+| `blur`            | —                                   | The document lost focus; the model is up to date.              |
+| `uploadError`     | `error: unknown`                    | An image was rejected or its upload failed.                    |
+| `importError`     | `error: unknown`                    | A Word file could not be read.                                 |
+| `exportError`     | `error: unknown`                    | The PDF could not be drawn; no file is downloaded.             |
+| `selectionChange` | `selection: SelectionOffsets \| null` | The caret or selection moved; `null` when it left the document. |
 
 ### Exposed methods (`DocumentEditor` ref)
 
@@ -144,6 +150,7 @@ Numbers are pixels; strings are used as CSS lengths (`'100%'`, `'50vh'`).
 | `print()`                 | Opens the browser print dialog.                                  |
 | `exportHtml()`            | Downloads the document as an HTML page.                          |
 | `exportWord()`            | Downloads the document as a Word file (`.docx`).                 |
+| `exportPdf()`             | Downloads the document as a PDF drawn from its pages.            |
 | `engine`                  | The editing engine (`DocumentEngine`), for advanced integrations. |
 
 ### Keyboard shortcuts
@@ -210,8 +217,25 @@ const submit = () => {
 footers with page fields, the watermark, lists, tables with merged cells, images, footnotes and tracked changes as
 Word revisions. "Open Word file (.docx)" (or `importWord(file)`) loads one into the editor, footnotes and revisions
 included; a file that cannot be read emits `importError`. `buildDocx` and `readDocx` do the same in your own code. A
-document with several sections gets the page setup of its last section, and the content of a different first page
-header is not imported.
+document with several sections takes the page setup of its first section, and every further section starts with a
+section break; the content of a different first page header is not imported.
+
+### PDF download
+
+"Download as PDF" in the "More" menu, or `exportPdf()`, saves a PDF without the print dialog. Every sheet is drawn into a
+picture (SVG `foreignObject` → canvas → JPEG) and written into the PDF, so it looks like the printout, but its text
+cannot be selected or searched. Images from servers without CORS are left out, and in the web view the editor switches to
+the page view for the moment of the export. A PDF that cannot be drawn emits `exportError`; printing with "Save as PDF"
+still gives a PDF with real text.
+
+### Pages in different orientations
+
+"Section break: landscape pages" and "Section break: portrait pages" in the insert menu and the `/` menu (or
+`engine.insertSectionBreak('landscape')`) turn the pages after the break; paper size and margins stay, and the break
+starts a new page. It is saved as `<div data-type="section-break" data-orientation="landscape"></div>`. The page view
+draws sheets of different sizes and gives the blocks of a turned section their sheet's text width; printing uses a named
+`@page` for turned sheets, the PDF has turned pages, and the Word export writes every section as a Word section with its
+own orientation.
 
 ### Footnotes
 
@@ -225,7 +249,8 @@ From code: `engine.insertFootnote(text)`, `setFootnoteText(element, text)`, `rem
 For long documents the toolbar offers multilevel numbering (1., 1.1., 1.1.1., saved as `<ol data-numbering="legal">`),
 a table of contents of the headings with page numbers (saved as `<table data-type="toc">`, refreshed with
 `updateTableOfContents()`), and a navigation pane. `PageSettings` has `differentFirstPage` to hide the header, footer
-and page number on the first page, and `firstPageNumber` for the number printed on it.
+and page number on the first page, and `firstPageNumber` for the number printed on it. The navigation pane lists the
+headings or shows page thumbnails; clicking one scrolls to it.
 
 ## Comments, tracked changes and comparison
 
@@ -253,12 +278,13 @@ const save = () =>
 </template>
 ```
 
-Users select text and press "Add comment" (`Ctrl/⌘+Alt+M`); the "Comments" panel replies, resolves, reopens and
-deletes them, and flags comments whose text was deleted.
+The comment and change tools are in the **Review** menu of the toolbar. Users select text and choose "Add comment"
+(`Ctrl/⌘+Alt+M`); the "Comments" panel replies, resolves, reopens and deletes them, and flags comments whose text was
+deleted.
 
 ### Tracked changes
 
-Bind `v-model:trackChanges` (or press "Track changes") to record typing, deleting, cut and paste as tracked changes
+Bind `v-model:trackChanges` (or choose "Track changes" in the Review menu) to record typing, deleting, cut and paste as tracked changes
 by `author`. They are part of the HTML, `<ins data-change="id" data-author="…" data-time="…">` and `<del …>`, shown
 and printed green-underlined and red-struck. The "Changes" panel accepts or rejects them one by one or all at once;
 from code use `engine.getChanges()`, `engine.resolveChanges(accept, id?)` and `engine.selectChange(id)`. Formatting,
@@ -277,9 +303,39 @@ shown whole. `compareDocuments(before, after)` returns the same HTML and counts 
 <DocumentCompare :before="previousVersion" :after="html" :height="600" />
 ```
 
+## Editing together
+
+The editor has hooks for several people on one document; the transport (WebSocket, WebRTC, …) is up to your app.
+`selectionChange` reports your caret or selection as character positions, `collaborators` draws other people's carets
+(with names) and selections, and a new `v-model` value from outside keeps your caret at the same character position.
+The engine also offers `getSelectionOffsets()`, `getOffsetRects(offsets)` and `setContent(html, { keepSelection })`;
+`collaboratorColor` gives the colour a collaborator is drawn in.
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue';
+import { type Collaborator, DocumentEditor, type SelectionOffsets } from 'nuvra';
+
+const html = ref('');
+const collaborators = ref<Collaborator[]>([]); // filled from your socket messages
+
+const sendSelection = (selection: SelectionOffsets | null) =>
+  socket.send(JSON.stringify({ type: 'selection', id: me.id, name: me.name, selection }));
+</script>
+
+<template>
+  <DocumentEditor v-model="html" :collaborators="collaborators" @selection-change="sendSelection" />
+</template>
+```
+
+This is not a CRDT: the document travels as a whole, so when two people type at the same time the document sent last
+wins, and because positions are character offsets, a remote edit before your caret shifts it. A library such as Yjs
+can carry the document and the selections (awareness), but edits are still not merged character by character. See the
+[guide](https://nuvra-docs.vercel.app/docs/collaboration).
+
 ## Commands and toolbar buttons
 
-Typing `/` at the start of a line or after a space opens a command menu: headings, lists, table, page break, footnote,
+Typing `/` at the start of a line or after a space opens a command menu: headings, lists, table, page and section breaks, footnote,
 table of contents, dates, signature blocks and your variables. `slashCommands` adds your own commands at the top, and the
 `toolbar` slot adds your own buttons:
 
