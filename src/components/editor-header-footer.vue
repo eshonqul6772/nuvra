@@ -5,6 +5,7 @@ import { type EditorLabelKey, useEditorLabels } from '../core/labels';
 import {
   HEADER_FOOTER_TOKENS,
   type HeaderFooterToken,
+  MAX_FIRST_PAGE_NUMBER,
   type PageHeaderFooter,
   type PageSettings,
   createHeaderFooter,
@@ -89,6 +90,19 @@ const insertToken = async (token: HeaderFooterToken) => {
 
 /** Removes both running texts. */
 const clear = () => emit('change', { ...props.page, header: undefined, footer: undefined });
+
+/** Shows or hides the running texts and the page number on the first page. */
+const onDifferentFirst = (event: Event) => {
+  const checked = (event.target as HTMLInputElement).checked;
+  emit('change', { ...props.page, differentFirstPage: checked || undefined });
+};
+
+/** Applies the number of the first page; an empty or invalid field counts from 1 again. */
+const onFirstNumber = (event: Event) => {
+  const value = Number.parseInt((event.target as HTMLInputElement).value, 10);
+  const number = Number.isInteger(value) ? Math.min(MAX_FIRST_PAGE_NUMBER, Math.max(0, value)) : 1;
+  emit('change', { ...props.page, firstPageNumber: number === 1 ? undefined : number });
+};
 </script>
 
 <template>
@@ -122,6 +136,24 @@ const clear = () => emit('change', { ...props.page, header: undefined, footer: u
       >
         {{ t(`editor.headerFooter.token.${token}`) }}
       </button>
+    </div>
+
+    <div class="header-footer__numbering">
+      <label class="header-footer__check">
+        <input type="checkbox" :checked="page.differentFirstPage === true" @change="onDifferentFirst" />
+        <span>{{ t('editor.headerFooter.differentFirst') }}</span>
+      </label>
+      <label class="header-footer__number">
+        <span>{{ t('editor.headerFooter.firstNumber') }}</span>
+        <input
+          class="doc-input"
+          type="number"
+          min="0"
+          :max="MAX_FIRST_PAGE_NUMBER"
+          :value="page.firstPageNumber ?? 1"
+          @change="onFirstNumber"
+        />
+      </label>
     </div>
 
     <div class="header-footer__actions">
@@ -171,6 +203,27 @@ const clear = () => emit('change', { ...props.page, header: undefined, footer: u
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+}
+
+/* Title page and first page number. */
+.header-footer__numbering {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  font-size: 12px;
+}
+
+.header-footer__check,
+.header-footer__number {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-footer__number .doc-input {
+  width: 72px;
 }
 
 .header-footer__actions {

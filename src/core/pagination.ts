@@ -1,4 +1,6 @@
+import { FOOTNOTE_ATTRIBUTE, FOOTNOTE_SELECTOR } from './engine/dom';
 import { GAP_ATTRIBUTE, SPACE_BEFORE_ATTRIBUTE, cleanEditorArtifacts } from './engine/schema';
+import { type SheetFootnote, footnotesHtml } from './footnotes';
 import type { PageMetrics } from './page';
 
 /** Handle returned by {@link createPagination}. */
@@ -15,6 +17,8 @@ export interface PaginationController {
 interface PaginationOptions {
   /** Receives the number of sheets whenever it changes. */
   onPageCount: (count: number) => void;
+  /** Receives the footnotes of every sheet whenever they change; the web view is one sheet holding all of them. */
+  onFootnotes?: (sheets: SheetFootnote[][]) => void;
   /** Whether an IME composition is in progress, during which blocks must not move. */
   isComposing: () => boolean;
 }
@@ -23,6 +27,8 @@ interface PaginationOptions {
 const EPSILON = 1;
 /** Page count reported when pagination is off. */
 const SINGLE_PAGE = 1;
+/** Measured heights of notes blocks kept before the cache starts over. */
+const NOTES_CACHE_LIMIT = 200;
 
 /** CSS pixels per point, used for the spacing a paragraph sets itself. */
 const PX_PER_POINT = 4 / 3;
@@ -54,18 +60,46 @@ const writeGap = (element: HTMLElement, gap: number) => {
 const marginBottom = (element: HTMLElement | undefined) =>
   element ? Number.parseFloat(getComputedStyle(element).marginBottom) || 0 : 0;
 
+/** Where the sheets break and which footnotes each sheet shows. */
+interface Layout {
+  /** Number of sheets. */
+  pageCount: number;
+  /** Footnotes of every sheet, in sheet order. */
+  footnotes: SheetFootnote[][];
+}
+
+/** Texts of the footnote references inside every top-level block, in document order. */
+const readBlockFootnotes = (children: HTMLElement[]): string[][] =>
+  children.map(child =>
+    Array.from(child.querySelectorAll(FOOTNOTE_SELECTOR), reference => reference.getAttribute(FOOTNOTE_ATTRIBUTE) ?? '')
+  );
+
+/** Gives every footnote its number, in the order of the blocks. */
+const numberFootnotes = (blocks: string[][]): SheetFootnote[][] => {
+  let number = 0;
+  return blocks.map(texts => texts.map(text => ({ number: ++number, text })));
+};
+
 /**
  * Lays top-level blocks out on sheets: a block that would cross the bottom margin, or follows a page break,
- * gets a top margin that moves it to the next sheet. Blocks taller than a page are not split.
- * All layout reads happen before the writes, so a pass costs a single reflow.
+ * gets a top margin that moves it to the next sheet. The notes of the footnotes a block refers to go to the bottom
+ * of the sheet the block starts on, and the space they need is kept free there. Blocks taller than a page are not
+ * split. Layout reads happen before the writes, so a pass costs a single reflow.
  *
- * @returns Number of sheets the document needs.
+ * @param measureNotes Height the notes block of the given footnotes takes on a sheet.
  */
-const paginate = (root: HTMLElement, page: PageMetrics): number => {
+const paginate = (root: HTMLElement, page: PageMetrics, measureNotes: (notes: SheetFootnote[]) => number): Layout => {
   const period = page.height + page.gap;
   const contentStart = (index: number) => Math.round(index * period + page.marginTop);
   const contentEnd = (index: number) => Math.round(index * period + page.height - page.marginBottom);
   const children = Array.from(root.children) as HTMLElement[];
+  const blockNotes = numberFootnotes(readBlockFootnotes(children));
+  const sheetNotes: SheetFootnote[][] = [];
+  /** Bottom of the text area of a sheet once the notes of the sheet, plus `extra`, are drawn under it. */
+  const textEnd = (index: number, extra: SheetFootnote[] = []) => {
+    const notes = [...(sheetNotes[index] ?? []), ...extra];
+    return contentEnd(index) - (notes.length ? measureNotes(notes) : 0);
+  };
 
   let appliedShift = 0;
   const measured = children.map((element, index) => {
@@ -86,9 +120,14 @@ const paginate = (root: HTMLElement, page: PageMetrics): number => {
   let breakBefore = false;
   measured.forEach(({ element, top: naturalTop, height }, index) => {
     let top = naturalTop + added;
-    if (top > contentStart(pageIndex) + EPSILON && (breakBefore || top + height > contentEnd(pageIndex) + EPSILON)) {
+    const notes = blockNotes[index] ?? [];
+    if (
+      top > contentStart(pageIndex) + EPSILON &&
+      (breakBefore || top + height > textEnd(pageIndex, notes) + EPSILON)
+    ) {
       pageIndex += 1;
     }
+    if (notes.length) sheetNotes[pageIndex] = [...(sheetNotes[pageIndex] ?? []), ...notes];
     const start = contentStart(pageIndex);
     let gap = 0;
     if (top < start - EPSILON) {
@@ -101,20 +140,22 @@ const paginate = (root: HTMLElement, page: PageMetrics): number => {
       top = start;
     }
     gaps.push(gap);
-    while (top + height > contentEnd(pageIndex) + EPSILON) pageIndex += 1;
+    // A block taller than the text area runs on over the following sheets.
+    while (top + height > textEnd(pageIndex) + EPSILON && top + height > contentStart(pageIndex + 1)) pageIndex += 1;
     breakBefore = element.getAttribute('data-type') === 'page-break';
   });
 
   children.forEach((element, index) => {
     writeGap(element, gaps[index] ?? 0);
   });
-  return pageIndex + 1;
+  const pageCount = pageIndex + 1;
+  return { pageCount, footnotes: Array.from({ length: pageCount }, (_, index) => sheetNotes[index] ?? []) };
 };
 
 /**
  * Splits the laid-out document into the clean HTML of every sheet, for printing and export. Pagination has already
  * moved every block onto its page, so a block belongs to the page its top falls on; blocks taller than a page stay
- * whole, exactly as they are shown on screen.
+ * whole, exactly as they are shown on screen. Footnote references keep their document-wide numbers.
  */
 export const splitIntoPages = (root: HTMLElement, metrics: PageMetrics, pageCount: number): string[] => {
   const period = metrics.height + metrics.gap;
@@ -125,20 +166,24 @@ export const splitIntoPages = (root: HTMLElement, metrics: PageMetrics, pageCoun
     const index = Math.min(sheets.length - 1, Math.max(0, Math.floor((child.offsetTop + EPSILON) / period)));
     sheets[index]?.push(child);
   }
+  let firstFootnote = 1;
   return sheets.map(blocks => {
     const container = document.createElement('div');
     container.append(...blocks.map(block => block.cloneNode(true)));
-    cleanEditorArtifacts(container, true);
+    const references = container.querySelectorAll(FOOTNOTE_SELECTOR).length;
+    cleanEditorArtifacts(container, true, firstFootnote);
+    firstFootnote += references;
     return container.innerHTML;
   });
 };
 
-/** Removes all page gaps, used when switching to the continuous web view. */
-const clearGaps = (root: HTMLElement) => {
+/** Removes all page gaps, used when switching to the continuous web view, where every footnote is on one sheet. */
+const clearGaps = (root: HTMLElement): Layout => {
   for (const element of Array.from(root.querySelectorAll<HTMLElement>(`:scope > [${GAP_ATTRIBUTE}]`))) {
     writeGap(element, 0);
   }
-  return SINGLE_PAGE;
+  const notes = numberFootnotes(readBlockFootnotes(Array.from(root.children) as HTMLElement[])).flat();
+  return { pageCount: SINGLE_PAGE, footnotes: [notes] };
 };
 
 /**
@@ -149,16 +194,47 @@ export const createPagination = (root: HTMLElement, options: PaginationOptions):
   let metrics: PageMetrics | null = null;
   let frame = 0;
   let pageCount = SINGLE_PAGE;
+  /** Footnotes last reported, serialised, so unchanged footnotes are not reported again. */
+  let footnotesKey = '';
+  /** Hidden notes block the notes of a sheet are measured with. */
+  let probe: HTMLElement | null = null;
+  const notesHeights = new Map<string, number>();
 
-  /** Runs one layout pass and reports a changed page count. */
+  /** Height the notes block of the given footnotes takes on a sheet, drawn as wide as the text area. */
+  const measureNotes = (notes: SheetFootnote[]) => {
+    const width = metrics ? metrics.width - metrics.marginLeft - metrics.marginRight : root.clientWidth;
+    const html = footnotesHtml(notes);
+    const key = `${width}|${html}`;
+    const known = notesHeights.get(key);
+    if (known !== undefined) return known;
+    if (!probe) {
+      probe = document.createElement('div');
+      probe.setAttribute('aria-hidden', 'true');
+      Object.assign(probe.style, { position: 'absolute', top: '0', left: '0', visibility: 'hidden' });
+    }
+    if (probe.parentElement !== root.parentElement) root.parentElement?.append(probe);
+    probe.style.width = `${width}px`;
+    probe.innerHTML = html;
+    const height = Math.ceil(probe.offsetHeight);
+    if (notesHeights.size > NOTES_CACHE_LIMIT) notesHeights.clear();
+    notesHeights.set(key, height);
+    return height;
+  };
+
+  /** Runs one layout pass and reports a changed page count or changed footnotes. */
   const measure = () => {
     frame = 0;
     // Moving blocks mid-composition disturbs IME and mobile keyboards; the engine re-schedules afterwards.
     if (!root.isConnected || options.isComposing()) return;
-    const count = metrics ? paginate(root, metrics) : clearGaps(root);
-    if (count !== pageCount) {
-      pageCount = count;
-      options.onPageCount(count);
+    const layout = metrics ? paginate(root, metrics, measureNotes) : clearGaps(root);
+    if (layout.pageCount !== pageCount) {
+      pageCount = layout.pageCount;
+      options.onPageCount(layout.pageCount);
+    }
+    const key = JSON.stringify(layout.footnotes);
+    if (key !== footnotesKey) {
+      footnotesKey = key;
+      options.onFootnotes?.(layout.footnotes);
     }
   };
 
@@ -180,6 +256,7 @@ export const createPagination = (root: HTMLElement, options: PaginationOptions):
     },
     schedule,
     destroy: () => {
+      probe?.remove();
       observer?.disconnect();
       root.removeEventListener('load', schedule, true);
       if (frame) cancelAnimationFrame(frame);

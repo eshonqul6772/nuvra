@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { URL, fileURLToPath } from 'node:url';
 
 import vue from '@vitejs/plugin-vue';
@@ -23,5 +24,11 @@ export default defineConfig({
       external: id => EXTERNAL_PACKAGES.some(name => id === name || id.startsWith(`${name}/`))
     },
     sourcemap: true
+  },
+  // Tests run the engine and the lighter components against a DOM implementation; the full editor is checked in the
+  // docs demo.
+  test: {
+    environment: 'happy-dom',
+    include: ['tests/**/*.test.ts']
   }
 });

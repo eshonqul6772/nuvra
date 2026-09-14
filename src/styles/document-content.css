@@ -72,6 +72,38 @@
   margin-bottom: 2pt;
 }
 
+/* Legal numbering (1., 1.1., 1.1.1.) for regulations and orders: nested ordered lists continue their parent's number. */
+.doc-content ol[data-numbering="legal"],
+.doc-content ol[data-numbering="legal"] ol {
+  padding-left: 0;
+  list-style: none;
+  counter-reset: doc-legal;
+}
+
+/* The number sits in its own column, so wrapped lines and nested lists align with the item text. */
+.doc-content ol[data-numbering="legal"] > li,
+.doc-content ol[data-numbering="legal"] ol > li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 6pt;
+  counter-increment: doc-legal;
+}
+
+.doc-content ol[data-numbering="legal"] > li::before,
+.doc-content ol[data-numbering="legal"] ol > li::before {
+  grid-row: 1;
+  grid-column: 1;
+  content: counters(doc-legal, ".") ".";
+}
+
+.doc-content ol[data-numbering="legal"] li > * {
+  grid-column: 2;
+}
+
+.doc-content ol[data-numbering="legal"] ol {
+  margin: 2pt 0 0;
+}
+
 .doc-content ul[data-type="taskList"] {
   padding-left: 2pt;
   list-style: none;
@@ -204,6 +236,68 @@
   background: #f2f4f7;
   font-weight: 700;
   text-align: left;
+}
+
+/* Signature blocks and the table of contents are laid out in tables without visible borders. */
+.doc-content table[data-type="signature"] td,
+.doc-content table[data-type="signature"] th,
+.doc-content table[data-type="toc"] td,
+.doc-content table[data-type="toc"] th {
+  padding: 0 5pt;
+  border: 0;
+  background: none;
+}
+
+.doc-content table[data-type="toc"] tr:first-child td {
+  padding-bottom: 6pt;
+}
+
+/* Tracked changes are shown, and printed, as reviewers expect them from Word. */
+.doc-content ins[data-change] {
+  color: #15803d;
+  text-decoration: underline;
+}
+
+.doc-content del[data-change] {
+  color: #b91c1c;
+  text-decoration: line-through;
+}
+
+/* Footnote references are numbered in document order; saved HTML also carries the number as text. */
+.doc-content {
+  counter-reset: doc-footnote;
+}
+
+.doc-content sup[data-footnote] {
+  counter-increment: doc-footnote;
+}
+
+.doc-content sup[data-footnote]:empty::after {
+  content: counter(doc-footnote);
+}
+
+/* Notes at the bottom of a sheet, under a short rule. */
+.doc-footnotes {
+  box-sizing: border-box;
+  padding-top: 4pt;
+  color: #1f2328;
+  font:
+    10pt / 1.3 "Times New Roman",
+    Times,
+    serif;
+}
+
+.doc-footnotes::before {
+  display: block;
+  width: 33%;
+  margin-bottom: 3pt;
+  border-top: 1px solid #667085;
+  content: "";
+}
+
+.doc-footnotes p {
+  margin: 0 0 2pt;
+  text-align: justify;
 }
 
 /* Manual page break: invisible in print, where it starts a new sheet. */

@@ -1,3 +1,6 @@
+import { parseAmount } from '../numbers';
+import { type OutlineHeading, TABLE_OF_CONTENTS_SELECTOR, readOutline } from '../outline';
+import { type TransliterationDirection, transliterate } from '../transliterate';
 import { type EditorUiState, readUiState } from '../ui-state';
 import {
   type HeadingTag,
@@ -13,6 +16,7 @@ import {
   setParagraphSpacing,
   setTextAlign,
   setTextDirection,
+  splitBlock,
   toggleBlockquote,
   toggleCodeBlock
 } from './blocks';
@@ -28,12 +32,21 @@ import {
   writeTransfer
 } from './clipboard';
 import {
+  FOOTNOTE_ATTRIBUTE,
+  FOOTNOTE_SELECTOR,
+  MAX_FOOTNOTE_LENGTH,
+  VARIABLE_ATTRIBUTE,
+  VARIABLE_SELECTOR,
   closestTag,
   closestTextBlock,
   createElement,
+  createFootnote,
   createParagraph,
+  createVariable,
   isEmptyTextBlock,
+  isText,
   isTextBlock,
+  mergeAdjacentMarks,
   syncTrailingBreak,
   textBlocksInRange,
   textBlocksWithin,
@@ -41,9 +54,11 @@ import {
 } from './dom';
 import {
   type Caret,
+  adjacentInlineAtom,
   deleteRange,
   endCaret,
   insertFragment,
+  insertInlineAtCaret,
   insertLineBreak,
   insertTextAtCaret,
   isCaretAtBlockEnd,
@@ -58,24 +73,39 @@ import { matchInputRule } from './input-rules';
 import { type KeyCommand, matchKeyCommand } from './keymap';
 import { type ListKind, changeListIndent, closestListItem, liftOutOfLists, toggleList } from './lists';
 import {
+  CHANGE_ATTRIBUTE,
+  CHANGE_SELECTOR,
+  COMMENT_ATTRIBUTE,
+  COMMENT_ID,
+  COMMENT_SELECTOR,
+  type ChangeMark,
   type MarkName,
   type PendingFormat,
   type StyleName,
   type TextCase,
+  addCommentAnchor,
   applyTextCase,
   clearMarks,
+  deletionAncestor,
   insertFormattedText,
   linkAncestor,
+  markDeleted,
+  markInserted,
   readHighlight,
   readMarks,
   readStyle,
+  resolveChanges,
+  selectedTextNodes,
   setHighlight,
   setLink,
   setTextStyle,
   toggleMark,
+  transformSelectedText,
   unsetLink
 } from './marks';
 import {
+  VARIABLE_LABEL_ATTRIBUTE,
+  VARIABLE_NAME,
   cleanEditorArtifacts,
   isBlockNode,
   isEmptyDocument,
@@ -118,6 +148,20 @@ import {
   toggleHeaderRow
 } from './tables';
 
+/** A tracked insertion or deletion; the parts of one edit are joined. */
+export interface TrackedChange {
+  /** Id shared by the parts of the edit. */
+  id: string;
+  /** Whether text was inserted or deleted. */
+  type: 'insert' | 'delete';
+  /** Name of the author; may be empty. */
+  author: string;
+  /** When the change was made, as an ISO 8601 string. */
+  time: string;
+  /** Inserted or deleted text. */
+  text: string;
+}
+
 /** Settings the host component passes when it creates the engine. */
 interface DocumentEngineOptions {
   /** Initial HTML; it is sanitised before it reaches the DOM. */
@@ -130,6 +174,11 @@ interface DocumentEngineOptions {
   placeholder: () => string;
   /** Receives image files pasted or dropped into the document; the selection is already at the target. */
   onImageFiles: (files: File[]) => void;
+  /**
+   * Label a template variable chip shows, or `undefined` for a name the host does not know. Called on every refresh,
+   * so labels follow the host's variable list and locale; typed `{{name}}` becomes a chip only for known names.
+   */
+  variableLabel?: (name: string) => string | undefined;
 }
 
 /** Events emitted by the engine, mapped to their payloads. */
@@ -252,6 +301,10 @@ export class DocumentEngine {
   private selectedImageElement: HTMLImageElement | null = null;
   /** Formatting the format painter carries until it is painted onto a selection. */
   private painterFormat: CopiedFormat | null = null;
+  /** Author of tracked changes while changes are tracked, otherwise `null`. */
+  private trackingAuthor: string | null = null;
+  /** Change the running typing group adds to, so typed characters form one insertion. */
+  private typingChange: ChangeMark | null = null;
 
   /**
    * Takes over `root` as the editable document, loads the initial content and starts listening to its events.
@@ -393,7 +446,7 @@ export class DocumentEngine {
 
   /** Word and character counts of the document text. */
   getStats(): { words: number; characters: number } {
-    const texts = textBlocksWithin(this.root).map(block => block.textContent ?? '');
+    const texts = this.blockTexts();
     return {
       characters: texts.reduce((sum, text) => sum + text.length, 0),
       words: texts.join(' ').split(/\s+/).filter(Boolean).length
@@ -511,10 +564,11 @@ export class DocumentEngine {
     return { blocks: Array.from(clone.children, child => child.outerHTML), bookmark };
   }
 
-  /** Updates the placeholder state and search results, then notifies listeners. */
+  /** Updates the placeholder state, variable labels and search results, then notifies listeners. */
   private refresh(emitUpdate = true) {
     this.root.classList.toggle('is-empty', this.isEmpty);
     this.root.style.setProperty('--doc-placeholder', JSON.stringify(this.options.placeholder()));
+    this.updateVariableLabels();
     if (this.search.active) this.search.refresh();
     if (emitUpdate) this.emit('update', undefined);
     this.emit('selection', undefined);
@@ -568,9 +622,13 @@ export class DocumentEngine {
     this.refresh();
   }
 
-  /** Deletes the selected content, if any, and returns a collapsed range where it started. */
-  private collapsedAfterDelete(range: Range): Range {
-    if (range.collapsed) return range;
+  /**
+   * Deletes the selected content, if any, and returns a collapsed range where the new content goes: where the selection
+   * started, or after the text marked as deleted while changes are tracked.
+   */
+  private collapsedAfterDelete(range: Range, kind: 'command' | 'typing' = 'command'): Range {
+    if (range.collapsed) return this.outsideDeletion(range);
+    if (this.trackingAuthor !== null) return this.outsideDeletion(this.deleteTracked(range, 'end', kind));
     const { anchor } = rangeToBookmark(this.root, range);
     deleteRange(this.root, range);
     normalizeContainer(this.root, true);
@@ -580,15 +638,147 @@ export class DocumentEngine {
   /** Deletes the selection as one undo step and leaves a collapsed caret where it started. */
   private deleteSelection() {
     this.exec(target => {
+      if (this.trackingAuthor !== null) {
+        const caret = this.deleteTracked(target, 'start', 'command');
+        return rangeToBookmark(this.root, caret);
+      }
       const { anchor } = rangeToBookmark(this.root, target);
       deleteRange(this.root, target);
       return { anchor, focus: anchor };
     });
   }
 
+  // -------------------------------------------------------------------------------------------------------------
+  // Tracked changes
+
+  /** Whether edits are recorded as tracked changes. */
+  get tracksChanges(): boolean {
+    return this.trackingAuthor !== null;
+  }
+
+  /** Starts or stops recording typing, deleting and pasting as tracked changes by `author`. */
+  setTrackChanges(enabled: boolean, author = ''): void {
+    this.trackingAuthor = enabled ? author : null;
+    this.typingChange = null;
+    this.emit('selection', undefined);
+  }
+
+  /** A change mark for the next edit; typing keeps adding to one change until the caret moves. */
+  private nextChange(kind: 'command' | 'typing'): ChangeMark {
+    if (kind === 'typing' && this.typingChange) return this.typingChange;
+    const mark: ChangeMark = {
+      id: `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
+      author: this.trackingAuthor ?? '',
+      time: new Date().toISOString().replace(/\.\d+Z$/, 'Z')
+    };
+    this.typingChange = kind === 'typing' ? mark : null;
+    return mark;
+  }
+
+  /**
+   * Marks a range as deleted and returns a caret at its start or after it. A marker element keeps the end position
+   * while own insertions inside the range are removed for real.
+   */
+  private deleteTracked(range: Range, caretAt: 'start' | 'end', kind: 'command' | 'typing'): Range {
+    // Positions are taken before the marker goes in, so the range is rebuilt from them rather than kept live. The
+    // marker is a <wbr>: it takes no position and, unlike an empty span, is not tidied away as an empty mark.
+    const bookmark = rangeToBookmark(this.root, range);
+    const from = Math.min(bookmark.anchor, bookmark.focus);
+    const to = Math.max(bookmark.anchor, bookmark.focus);
+    const marker = document.createElement('wbr');
+    bookmarkToRange(this.root, {
+      anchor: caretAt === 'start' ? from : to,
+      focus: caretAt === 'start' ? from : to
+    }).insertNode(marker);
+    markDeleted(this.root, bookmarkToRange(this.root, { anchor: from, focus: to }), this.nextChange(kind));
+    const caret = document.createRange();
+    caret.setStartBefore(marker);
+    const { anchor } = rangeToBookmark(this.root, caret);
+    marker.remove();
+    normalizeContainer(this.root, true);
+    return bookmarkToRange(this.root, { anchor, focus: anchor });
+  }
+
+  /** Moves a caret that sits inside deleted text to its end, so new text never becomes part of a deletion. */
+  private outsideDeletion(range: Range): Range {
+    const deletion = this.trackingAuthor === null ? null : deletionAncestor(range.startContainer, this.root);
+    if (!deletion) return range;
+    const caret = document.createRange();
+    caret.setStartAfter(deletion);
+    caret.collapse(true);
+    return caret;
+  }
+
+  /** Marks the text between two document positions as inserted by the tracking author. */
+  private markInsertedBetween(from: number, to: number, kind: 'command' | 'typing') {
+    if (this.trackingAuthor === null || to <= from) return;
+    markInserted(this.root, bookmarkToRange(this.root, { anchor: from, focus: to }), this.nextChange(kind));
+  }
+
+  /** Tracked insertions and deletions in document order, the parts of one edit grouped by id and kind. */
+  getChanges(): TrackedChange[] {
+    const changes = new Map<string, TrackedChange>();
+    for (const element of Array.from(this.root.querySelectorAll<HTMLElement>(CHANGE_SELECTOR))) {
+      const id = element.getAttribute(CHANGE_ATTRIBUTE) ?? '';
+      const type = element.tagName === 'INS' ? 'insert' : 'delete';
+      const key = `${type}:${id}`;
+      const known = changes.get(key);
+      const text = element.textContent ?? '';
+      if (known) known.text += text;
+      else
+        changes.set(key, {
+          id,
+          type,
+          author: element.getAttribute('data-author') ?? '',
+          time: element.getAttribute('data-time') ?? '',
+          text
+        });
+    }
+    return [...changes.values()];
+  }
+
+  /** Accepts (`true`) or rejects the tracked changes with the given id, or every change without one, as an undo step. */
+  resolveChanges(accept: boolean, id?: string): void {
+    const elements = Array.from(this.root.querySelectorAll<HTMLElement>(CHANGE_SELECTOR)).filter(
+      element => id === undefined || element.getAttribute(CHANGE_ATTRIBUTE) === id
+    );
+    if (!elements.length) return;
+    this.mutate(() => {
+      resolveChanges(elements, accept);
+      normalizeContainer(this.root, true);
+    });
+  }
+
+  /** Selects the text of a tracked change and scrolls it into view. */
+  selectChange(id: string): void {
+    const parts = Array.from(this.root.querySelectorAll<HTMLElement>(CHANGE_SELECTOR)).filter(
+      element => element.getAttribute(CHANGE_ATTRIBUTE) === id
+    );
+    const first = parts[0];
+    const last = parts.at(-1);
+    if (!first || !last) return;
+    const range = document.createRange();
+    range.setStartBefore(first);
+    range.setEndAfter(last);
+    first.scrollIntoView({ block: 'center' });
+    this.root.focus({ preventScroll: true });
+    selectRange(range);
+  }
+
   /** Number of characters in the document text. */
   private characterCount(): number {
-    return textBlocksWithin(this.root).reduce((sum, block) => sum + (block.textContent?.length ?? 0), 0);
+    return this.blockTexts().reduce((sum, text) => sum + text.length, 0);
+  }
+
+  /** Text of every block as the document reads once its tracked changes are accepted: deleted text is left out. */
+  private blockTexts(): string[] {
+    const hasDeletions = this.root.querySelector(`del[${CHANGE_ATTRIBUTE}]`) !== null;
+    return textBlocksWithin(this.root).map(block => {
+      if (!hasDeletions) return block.textContent ?? '';
+      const copy = block.cloneNode(true) as HTMLElement;
+      for (const deletion of Array.from(copy.querySelectorAll(`del[${CHANGE_ATTRIBUTE}]`))) deletion.remove();
+      return copy.textContent ?? '';
+    });
   }
 
   /** Whether adding `extra` characters would exceed the configured maximum length. */
@@ -607,6 +797,7 @@ export class DocumentEngine {
     if (performance.now() > this.internalSelectionUntil) {
       this.pending = null;
       this.history.breakGroup();
+      this.typingChange = null;
     }
     this.emit('selection', undefined);
   };
@@ -659,6 +850,11 @@ export class DocumentEngine {
       return;
     }
     const block = closestTextBlock(range.startContainer, this.root);
+    if (this.trackingAuthor !== null) {
+      event.preventDefault();
+      this.insertText(text);
+      return;
+    }
     if (event.inputType === 'insertText' && (!range.collapsed || this.pending || !block)) {
       event.preventDefault();
       this.insertText(text);
@@ -676,12 +872,73 @@ export class DocumentEngine {
     }
     const block = closestTextBlock(range.startContainer, this.root);
     const backward = event.inputType.includes('Backward');
+    const chip = adjacentInlineAtom(this.root, range, backward);
+    if (chip) {
+      // Browsers disagree on deleting non-editable inline elements, so a chip is removed like one character.
+      event.preventDefault();
+      const { anchor } = rangeToBookmark(this.root, range);
+      const position = backward ? anchor - 1 : anchor;
+      this.exec(() => {
+        chip.remove();
+        return { anchor: position, focus: position };
+      }, 'typing');
+      return;
+    }
     if (block && (backward ? isCaretAtBlockStart(block, range) : isCaretAtBlockEnd(block, range))) {
       event.preventDefault();
       this.exec(() => (backward ? joinBackward(this.root, block) : joinForward(this.root, block)));
       return;
     }
+    if (this.trackingAuthor !== null) {
+      event.preventDefault();
+      this.deleteTrackedAtCaret(range, backward, event.inputType);
+      return;
+    }
     this.history.record(() => this.snapshot(), 'typing');
+  }
+
+  /**
+   * Marks the character, word or line next to the caret as deleted. Text that is already marked as deleted is
+   * stepped over, as in Word, instead of being deleted again.
+   */
+  private deleteTrackedAtCaret(range: Range, backward: boolean, inputType: string) {
+    const granularity = /Word/.test(inputType) ? 'word' : /Line/.test(inputType) ? 'lineboundary' : 'character';
+    const extended = this.extendCaret(range, backward, granularity);
+    if (!extended || extended.collapsed) return;
+    const allDeleted = selectedTextNodes(this.root, extended).every(node => deletionAncestor(node, this.root));
+    if (allDeleted) {
+      const bookmark = rangeToBookmark(this.root, extended);
+      const position = backward ? Math.min(bookmark.anchor, bookmark.focus) : Math.max(bookmark.anchor, bookmark.focus);
+      this.expectInternalSelection();
+      restoreBookmark(this.root, { anchor: position, focus: position });
+      this.emit('selection', undefined);
+      return;
+    }
+    this.exec(
+      () => rangeToBookmark(this.root, this.deleteTracked(extended, backward ? 'start' : 'end', 'typing')),
+      'typing'
+    );
+  }
+
+  /** The range from a caret to the next character, word or line boundary in one direction. */
+  private extendCaret(
+    range: Range,
+    backward: boolean,
+    granularity: 'character' | 'word' | 'lineboundary'
+  ): Range | null {
+    const selection = document.getSelection();
+    if (selection && typeof selection.modify === 'function' && selection.rangeCount) {
+      selection.modify('extend', backward ? 'backward' : 'forward', granularity);
+      const extended = selection.getRangeAt(0).cloneRange();
+      this.expectInternalSelection();
+      selectRange(range);
+      if (!extended.collapsed) return this.root.contains(extended.commonAncestorContainer) ? extended : null;
+    }
+    // Without a working Selection.modify one character is deleted.
+    const { anchor } = rangeToBookmark(this.root, range);
+    const other = backward ? anchor - 1 : anchor + 1;
+    if (other < 0) return null;
+    return bookmarkToRange(this.root, { anchor: Math.min(anchor, other), focus: Math.max(anchor, other) });
   }
 
   /** Repairs the structure after a native edit and applies Markdown and typography rules to typed text. */
@@ -713,7 +970,8 @@ export class DocumentEngine {
   /** Applies the input rule completed by the typed character as its own undo step. */
   private applyInputRule(typed: string) {
     const range = getRangeWithin(this.root);
-    const rule = range ? matchInputRule(this.root, range, typed) : null;
+    const isKnownVariable = (name: string) => this.options.variableLabel?.(name) !== undefined;
+    const rule = range ? matchInputRule(this.root, range, typed, isKnownVariable) : null;
     if (!rule) return;
     let pending: PendingFormat | undefined;
     this.exec(() => {
@@ -851,7 +1109,17 @@ export class DocumentEngine {
     const inCode = range ? closestTextBlock(range.startContainer, this.root)?.tagName === 'PRE' : false;
     const fragment = inCode ? textToFragment(content.text) : transferToFragment(content);
     if (!fragment || this.exceedsLimit(fragment.textContent?.length ?? 0)) return;
-    this.exec(target => insertFragment(this.root, this.collapsedAfterDelete(target), fragment) ?? undefined);
+    this.exec(target => {
+      const start = this.collapsedAfterDelete(target);
+      const { anchor } = rangeToBookmark(this.root, start);
+      const caret = insertFragment(this.root, start, fragment);
+      if (!caret || this.trackingAuthor === null) return caret ?? undefined;
+      const end = document.createRange();
+      end.setStart(caret.node, caret.offset);
+      const after = rangeToBookmark(this.root, end).anchor;
+      this.markInsertedBetween(anchor, after, 'command');
+      return { anchor: after, focus: after };
+    });
   }
 
   /** Puts clean HTML and plain text of the selection on the clipboard. */
@@ -917,12 +1185,23 @@ export class DocumentEngine {
     if (source && !source.collapsed && !event.ctrlKey && this.root.contains(source.startContainer)) {
       const moved = rangeToBookmark(this.root, source);
       if (insertAt > moved.anchor && insertAt < moved.focus) return;
-      deleteRange(this.root, source);
-      normalizeContainer(this.root, true);
-      if (insertAt >= moved.focus) insertAt -= moved.focus - moved.anchor;
+      if (this.trackingAuthor !== null) {
+        // The moved text stays visible as a deletion, so positions after it do not shift.
+        markDeleted(this.root, source, this.nextChange('command'));
+        normalizeContainer(this.root, true);
+      } else {
+        deleteRange(this.root, source);
+        normalizeContainer(this.root, true);
+        if (insertAt >= moved.focus) insertAt -= moved.focus - moved.anchor;
+      }
     }
     const target = bookmarkToRange(this.root, { anchor: insertAt, focus: insertAt });
     const caret = insertFragment(this.root, target, fragment);
+    if (caret && this.trackingAuthor !== null) {
+      const end = document.createRange();
+      end.setStart(caret.node, caret.offset);
+      this.markInsertedBetween(insertAt, rangeToBookmark(this.root, end).anchor, 'command');
+    }
     this.history.record(() => before, 'command');
     this.finishEdit(caret ?? { anchor: insertAt, focus: insertAt });
   };
@@ -991,9 +1270,15 @@ export class DocumentEngine {
   };
 
   /** Repairs the structure once the IME has committed its text. */
-  private onCompositionEnd = () => {
+  private onCompositionEnd = (event: CompositionEvent) => {
     this.composingText = false;
     this.repairStructure();
+    const range = getRangeWithin(this.root);
+    if (this.trackingAuthor !== null && event.data && range?.collapsed) {
+      const { anchor } = rangeToBookmark(this.root, range);
+      this.markInsertedBetween(anchor - event.data.length, anchor, 'typing');
+      restoreBookmark(this.root, { anchor, focus: anchor });
+    }
     this.refresh();
     this.emit('composition', false);
   };
@@ -1036,15 +1321,45 @@ export class DocumentEngine {
     if (this.exceedsLimit(text.length)) return;
     const pending = this.pending;
     this.exec(range => {
-      const target = this.collapsedAfterDelete(range);
+      const target = this.collapsedAfterDelete(range, 'typing');
+      const { anchor } = rangeToBookmark(this.root, target);
       if (pending && closestTextBlock(target.startContainer, this.root)) {
-        const { anchor } = rangeToBookmark(this.root, target);
         insertFormattedText(this.root, target, text, pending);
-        return { anchor: anchor + text.length, focus: anchor + text.length };
+      } else {
+        const caret = insertTextAtCaret(this.root, target, text);
+        if (this.trackingAuthor === null) return caret;
       }
-      return insertTextAtCaret(this.root, target, text);
+      this.markInsertedBetween(anchor, anchor + text.length, 'typing');
+      return { anchor: anchor + text.length, focus: anchor + text.length };
     }, 'typing');
     this.pending = null;
+  }
+
+  /** Text of the current block before a collapsed caret, or `null` when the selection is not a caret in text. */
+  getTextBeforeCaret(): string | null {
+    const range = this.currentRange();
+    if (!range?.collapsed) return null;
+    const block = closestTextBlock(range.startContainer, this.root);
+    if (!block || block.tagName === 'PRE') return null;
+    const before = document.createRange();
+    before.selectNodeContents(block);
+    before.setEnd(range.startContainer, range.startOffset);
+    return before.toString();
+  }
+
+  /**
+   * Deletes the characters right before a collapsed caret, as one undo step; used by typed triggers such as the
+   * `/` command menu to remove what was typed.
+   */
+  deleteBeforeCaret(count: number): void {
+    if (count <= 0) return;
+    this.exec(range => {
+      if (!range.collapsed) return null;
+      const { anchor } = rangeToBookmark(this.root, range);
+      const start = Math.max(0, anchor - count);
+      deleteRange(this.root, bookmarkToRange(this.root, { anchor: start, focus: anchor }));
+      return { anchor: start, focus: start };
+    });
   }
 
   /** Formatting at the start of a range, or `null` when the text there is unformatted. */
@@ -1124,6 +1439,42 @@ export class DocumentEngine {
   /** Changes the letter case of the selected text. */
   changeTextCase(mode: TextCase): void {
     this.exec(range => (applyTextCase(this.root, range, mode) ? undefined : null));
+  }
+
+  /** Converts Uzbek text between the Latin and Cyrillic alphabet: the selection, or the whole document at a caret. */
+  transliterate(direction: TransliterationDirection): void {
+    this.exec(range => {
+      const target = range.cloneRange();
+      if (target.collapsed) target.selectNodeContents(this.root);
+      const changed = transformSelectedText(this.root, target, (text, previous) =>
+        transliterate(text, direction, previous)
+      );
+      return changed ? undefined : null;
+    });
+  }
+
+  /**
+   * Rewrites the amount that is selected, or the number right before the caret, with `format`; used to add an amount
+   * in words. Nothing changes when the text there is not an amount.
+   *
+   * @returns whether an amount was found and rewritten.
+   */
+  replaceAmount(format: (value: number) => string): boolean {
+    const range = this.currentRange();
+    if (!range || !this.editable) return false;
+    const target = range.cloneRange();
+    if (target.collapsed) {
+      const node = target.startContainer;
+      if (node.nodeType !== Node.TEXT_NODE) return false;
+      const before = (node as Text).data.slice(0, target.startOffset);
+      const match = /-?\d(?:[\d   .,]*\d)?$/.exec(before);
+      if (!match) return false;
+      target.setStart(node, match.index);
+    }
+    const value = parseAmount(target.toString());
+    if (value === null) return false;
+    const text = format(value);
+    return this.exec(() => insertTextAtCaret(this.root, this.collapsedAfterDelete(target), text));
   }
 
   /** Stores the format the painter carries and shows the painting cursor while it does. */
@@ -1282,6 +1633,27 @@ export class DocumentEngine {
     });
   }
 
+  /**
+   * Switches the numbered list at the selection, together with its nested lists, between simple (1, 2, 3) and legal
+   * (1.1, 1.2) numbering. The setting lives on the outermost numbered list.
+   */
+  setListNumbering(style: 'default' | 'legal'): void {
+    this.exec(range => {
+      let outer: HTMLElement | null = null;
+      for (
+        let node = closestListItem(range.startContainer, this.root)?.parentElement ?? null;
+        node && node !== this.root;
+        node = node.parentElement
+      ) {
+        if (node.tagName === 'OL') outer = node;
+      }
+      if (!outer || (outer.getAttribute('data-numbering') === 'legal') === (style === 'legal')) return null;
+      if (style === 'legal') outer.setAttribute('data-numbering', 'legal');
+      else outer.removeAttribute('data-numbering');
+      return undefined;
+    });
+  }
+
   /** List items are nested or lifted; other paragraphs get indentation steps. */
   indent(direction: 1 | -1): void {
     this.exec(target => {
@@ -1313,6 +1685,251 @@ export class DocumentEngine {
   /** Inserts a manual page break. */
   insertPageBreak(): void {
     this.insertBlock(createElement('div', { 'data-type': 'page-break', class: 'doc-page-break' }));
+  }
+
+  /**
+   * Inserts sanitised HTML at the selection as one undo step. By default it flows into the current line the way pasting
+   * does; with `asBlocks` the content starts on a line of its own after a non-empty paragraph, as prepared fragments
+   * such as signature blocks and document templates should.
+   */
+  insertContent(html: string, { asBlocks = false } = {}): void {
+    if (!asBlocks) {
+      this.insertTransfer({ html, text: '', files: [] });
+      return;
+    }
+    const fragment = sanitizeHtml(html);
+    if (this.exceedsLimit(fragment.textContent?.length ?? 0)) return;
+    this.exec(range => {
+      const nodes = Array.from(fragment.childNodes);
+      const last = nodes.at(-1);
+      if (!last) return null;
+      const target = this.collapsedAfterDelete(range);
+      const block = closestTextBlock(target.startContainer, this.root);
+      if (!block) {
+        this.root.append(...nodes);
+      } else if (isEmptyTextBlock(block)) {
+        block.before(...nodes);
+        // The empty line only stays when nothing follows, so the caret has a place after the content.
+        if (block.nextElementSibling) block.remove();
+      } else if (isCaretAtBlockStart(block, target)) {
+        block.before(...nodes);
+      } else if (isCaretAtBlockEnd(block, target)) {
+        block.after(...nodes);
+      } else {
+        splitBlock(block, target.startContainer, target.startOffset);
+        block.after(...nodes);
+      }
+      if (isTextBlock(last) && last.tagName !== 'PRE') return endCaret(last);
+      const next = last.nextSibling;
+      if (isTextBlock(next)) return startCaret(next);
+      const paragraph = createParagraph();
+      last.after(paragraph);
+      return startCaret(paragraph);
+    });
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Outline
+
+  /** Headings written directly in the document, in document order, down to the given level. */
+  getOutline(depth?: number): OutlineHeading[] {
+    return readOutline(this.root, depth);
+  }
+
+  /** Whether the document has a table of contents. */
+  get hasTableOfContents(): boolean {
+    return this.root.querySelector(TABLE_OF_CONTENTS_SELECTOR) !== null;
+  }
+
+  /**
+   * Writes a table of contents: an existing one is replaced in place, keeping the selection, otherwise the table is
+   * inserted at the selection. Without `addToHistory` a replacement joins the previous undo step, e.g. when page
+   * numbers are corrected right after inserting the table.
+   */
+  setTableOfContents(html: string, { addToHistory = true } = {}): void {
+    const current = this.root.querySelector<HTMLElement>(TABLE_OF_CONTENTS_SELECTOR);
+    if (!current) {
+      this.insertContent(html, { asBlocks: true });
+      return;
+    }
+    const table = sanitizeHtml(html).firstElementChild;
+    if (!table || !this.editable) return;
+    if (addToHistory) {
+      this.mutate(() => current.replaceWith(table));
+      return;
+    }
+    current.replaceWith(table);
+    this.refresh();
+  }
+
+  /** Scrolls a heading to the top of the view and puts the caret at its start. */
+  goToHeading(heading: HTMLElement): void {
+    if (!this.root.contains(heading)) return;
+    heading.scrollIntoView({ block: 'start' });
+    const range = document.createRange();
+    range.setStart(heading, 0);
+    range.collapse(true);
+    this.root.focus({ preventScroll: true });
+    selectRange(range);
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Footnotes
+
+  /**
+   * Inserts a footnote reference with its text at the selection, replacing selected content, as one undo step.
+   * @returns the new reference, or `null` when nothing could be inserted (for example in a code block).
+   */
+  insertFootnote(text: string): HTMLElement | null {
+    let inserted: HTMLElement | null = null;
+    this.exec(range => {
+      const reference = createFootnote(text);
+      const caret = insertInlineAtCaret(this.root, this.collapsedAfterDelete(range), reference);
+      if (caret) inserted = reference;
+      return caret;
+    });
+    return inserted;
+  }
+
+  /** Changes the text of a footnote as one undo step; unchanged text records nothing. */
+  setFootnoteText(reference: HTMLElement, text: string): void {
+    const value = text.slice(0, MAX_FOOTNOTE_LENGTH);
+    if (!this.root.contains(reference) || reference.getAttribute(FOOTNOTE_ATTRIBUTE) === value) return;
+    this.mutate(() => reference.setAttribute(FOOTNOTE_ATTRIBUTE, value));
+  }
+
+  /** Removes a footnote reference together with its note, as one undo step. */
+  removeFootnote(reference: HTMLElement): void {
+    if (!this.root.contains(reference)) return;
+    this.mutate(() => {
+      const block = closestTextBlock(reference, this.root);
+      reference.remove();
+      if (block) {
+        mergeAdjacentMarks(block);
+        syncTrailingBreak(block);
+      }
+    });
+  }
+
+  /** Footnote references with their texts, in document order; the first one is number 1. */
+  getFootnotes(): Array<{ element: HTMLElement; text: string }> {
+    return Array.from(this.root.querySelectorAll<HTMLElement>(FOOTNOTE_SELECTOR)).map(element => ({
+      element,
+      text: element.getAttribute(FOOTNOTE_ATTRIBUTE) ?? ''
+    }));
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Comments
+
+  /**
+   * Anchors a new comment to the selected text as one undo step.
+   * @returns whether text was selected and the id is valid.
+   */
+  addComment(id: string): boolean {
+    if (!COMMENT_ID.test(id)) return false;
+    return this.exec(range => (addCommentAnchor(this.root, range, id) ? undefined : null));
+  }
+
+  /** Removes the anchors of a comment, keeping their text, as one undo step. */
+  removeComment(id: string): void {
+    const anchors = this.commentAnchors(id);
+    if (!anchors.length) return;
+    this.mutate(() => {
+      for (const anchor of anchors) {
+        const block = closestTextBlock(anchor, this.root);
+        unwrap(anchor);
+        if (block) mergeAdjacentMarks(block);
+      }
+    });
+  }
+
+  /** Ids of the comments anchored in the document, each once, in document order. */
+  getCommentIds(): string[] {
+    const anchors = Array.from(this.root.querySelectorAll<HTMLElement>(COMMENT_SELECTOR));
+    return [...new Set(anchors.map(anchor => anchor.getAttribute(COMMENT_ATTRIBUTE) ?? ''))].filter(Boolean);
+  }
+
+  /** Ids of the comments anchored around the caret or the start of the selection, innermost first. */
+  getCommentsAtSelection(): string[] {
+    const range = this.currentRange();
+    if (!range) return [];
+    const ids: string[] = [];
+    let node: Node | null = range.startContainer;
+    // A caret right after an anchor's last character still belongs to it.
+    if (isText(node) && range.startOffset === 0 && range.collapsed) node = node.previousSibling ?? node;
+    while (node && node !== this.root) {
+      if (node instanceof HTMLElement && node.matches(COMMENT_SELECTOR)) {
+        ids.push(node.getAttribute(COMMENT_ATTRIBUTE) ?? '');
+      }
+      node = node.parentNode;
+    }
+    return ids;
+  }
+
+  /** Selects the text of a comment and scrolls it into view. */
+  selectComment(id: string): void {
+    const anchors = this.commentAnchors(id);
+    const first = anchors[0];
+    const last = anchors.at(-1);
+    if (!first || !last) return;
+    const range = document.createRange();
+    range.setStartBefore(first);
+    range.setEndAfter(last);
+    first.scrollIntoView({ block: 'center' });
+    this.root.focus({ preventScroll: true });
+    selectRange(range);
+  }
+
+  /**
+   * Shows resolved comments without their highlight and marks the active one. Only classes change, which saved HTML
+   * drops, so this is neither an edit nor an undo step.
+   */
+  decorateComments(resolved: ReadonlySet<string>, active: string | null): void {
+    for (const anchor of Array.from(this.root.querySelectorAll<HTMLElement>(COMMENT_SELECTOR))) {
+      const id = anchor.getAttribute(COMMENT_ATTRIBUTE) ?? '';
+      anchor.classList.toggle('is-resolved', resolved.has(id));
+      anchor.classList.toggle('is-active', id === active);
+      if (!anchor.classList.length) anchor.removeAttribute('class');
+    }
+  }
+
+  /** Anchor elements of one comment, in document order. */
+  private commentAnchors(id: string): HTMLElement[] {
+    return Array.from(this.root.querySelectorAll<HTMLElement>(COMMENT_SELECTOR)).filter(
+      anchor => anchor.getAttribute(COMMENT_ATTRIBUTE) === id
+    );
+  }
+
+  // -------------------------------------------------------------------------------------------------------------
+  // Template variables
+
+  /** Inserts the chip of a template variable at the selection; invalid names are ignored. */
+  insertVariable(name: string): void {
+    if (!VARIABLE_NAME.test(name)) return;
+    this.exec(range => insertInlineAtCaret(this.root, this.collapsedAfterDelete(range), createVariable(name)));
+  }
+
+  /** Names of the template variables used in the document, each once, in document order. */
+  getVariables(): string[] {
+    const chips = Array.from(this.root.querySelectorAll<HTMLElement>(VARIABLE_SELECTOR));
+    return [...new Set(chips.map(chip => chip.getAttribute(VARIABLE_ATTRIBUTE) ?? ''))].filter(Boolean);
+  }
+
+  /** Re-reads the labels of every variable chip, e.g. after the host's variable list or locale changed. */
+  refreshVariables(): void {
+    this.updateVariableLabels();
+  }
+
+  /** Writes the host's label into every chip that shows a different one; a chip of an unknown name shows `{{name}}`. */
+  private updateVariableLabels() {
+    for (const chip of Array.from(this.root.querySelectorAll<HTMLElement>(VARIABLE_SELECTOR))) {
+      const name = chip.getAttribute(VARIABLE_ATTRIBUTE) ?? '';
+      const label = this.options.variableLabel?.(name);
+      const text = label ?? `{{${name}}}`;
+      if (chip.getAttribute(VARIABLE_LABEL_ATTRIBUTE) !== text) chip.setAttribute(VARIABLE_LABEL_ATTRIBUTE, text);
+      chip.classList.toggle('is-unknown', label === undefined);
+    }
   }
 
   // -------------------------------------------------------------------------------------------------------------

@@ -1,7 +1,9 @@
 import {
+  INLINE_ATOM_SELECTOR,
   closestTextBlock,
   closestWithin,
   isElement,
+  isInlineAtom,
   isText,
   mergeAdjacentMarks,
   removeEmptyMarks,
@@ -48,9 +50,12 @@ const FORMATTING_TAGS = new Set(['STRONG', 'EM', 'U', 'S', 'CODE', 'SUB', 'SUP',
 /** `rel` written on links so opened pages cannot reach back into the application. */
 const LINK_REL = 'noopener noreferrer nofollow';
 
-/** Nearest ancestor matching the predicate without leaving the text block that contains `node`. */
+/**
+ * Nearest ancestor matching the predicate without leaving the text block that contains `node`. An inline atom (variable
+ * chip or footnote reference) is formatted like a character, so the search starts at its parent: it is never a mark.
+ */
 const ancestorWithin = (node: Node, root: HTMLElement, predicate: (element: HTMLElement) => boolean) =>
-  closestWithin(node, closestTextBlock(node, root) ?? root, predicate);
+  closestWithin(isInlineAtom(node) ? node.parentNode : node, closestTextBlock(node, root) ?? root, predicate);
 
 /** Nearest mark element with the given tag around `node`. */
 const markAncestor = (node: Node, root: HTMLElement, tag: string) =>
@@ -74,7 +79,12 @@ const splitRangeBoundaries = (range: Range): void => {
   if (isText(endContainer) && endOffset > 0 && endOffset < endContainer.length) endContainer.splitText(endOffset);
   const { startContainer, startOffset } = range;
   if (isText(startContainer) && startOffset > 0 && startOffset < startContainer.length) {
-    startContainer.splitText(startOffset);
+    const sameNode = range.endContainer === startContainer;
+    const end = range.endOffset;
+    const after = startContainer.splitText(startOffset);
+    // The boundaries are set explicitly instead of relying on live range updates, which not every DOM implements.
+    if (sameNode) range.setEnd(after, end - startOffset);
+    range.setStart(after, 0);
   }
 };
 
@@ -95,6 +105,25 @@ export const selectedTextNodes = (root: HTMLElement, range: Range): Text[] => {
     if (to > from) nodes.push(text);
   }
   return nodes;
+};
+
+/**
+ * Selected inline leaves that formatting applies to: the selected text nodes plus the inline atoms inside the
+ * selection, in document order.
+ */
+const selectedInlineNodes = (root: HTMLElement, range: Range): ChildNode[] => {
+  const texts = selectedTextNodes(root, range);
+  if (range.collapsed) return texts;
+  const ancestor = range.commonAncestorContainer;
+  const scope = isElement(ancestor) ? ancestor : ancestor.parentElement;
+  const chips = Array.from(scope?.querySelectorAll<HTMLElement>(INLINE_ATOM_SELECTOR) ?? []).filter(chip => {
+    const block = closestTextBlock(chip, root);
+    return block !== null && block.tagName !== 'PRE' && range.intersectsNode(chip);
+  });
+  if (!chips.length) return texts;
+  return [...texts, ...chips].sort((a, b) =>
+    a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+  );
 };
 
 /** Splits the parent of `child` into up to three shallow copies so `child` ends up alone in the middle one. */
@@ -122,8 +151,8 @@ const isolate = (node: Node, ancestor: HTMLElement): HTMLElement => {
   return ancestor;
 };
 
-/** Wraps a text node in a new element with the given tag and returns that element. */
-const wrapText = (node: Text, tag: string): HTMLElement => {
+/** Wraps a text node or inline atom in a new element with the given tag and returns that element. */
+const wrapText = (node: ChildNode, tag: string): HTMLElement => {
   const element = document.createElement(tag);
   node.before(element);
   element.append(node);
@@ -148,12 +177,13 @@ const tidyBlocks = (root: HTMLElement, nodes: Node[]) => {
 };
 
 /**
- * Runs `apply` for every selected text node after splitting the range edges, then tidies the touched blocks.
- * @returns whether any text was selected.
+ * Runs `apply` for every selected text node and variable chip after splitting the range edges, then tidies the
+ * touched blocks.
+ * @returns whether anything was selected.
  */
-const eachSelectedText = (root: HTMLElement, range: Range, apply: (node: Text) => void) => {
+const eachSelectedText = (root: HTMLElement, range: Range, apply: (node: ChildNode) => void) => {
   splitRangeBoundaries(range);
-  const nodes = selectedTextNodes(root, range);
+  const nodes = selectedInlineNodes(root, range);
   for (const node of nodes) apply(node);
   tidyBlocks(root, nodes);
   return nodes.length > 0;
@@ -174,7 +204,7 @@ export const isMarkActive = (root: HTMLElement, range: Range, mark: MarkName): b
 export const toggleMark = (root: HTMLElement, range: Range, mark: MarkName): void => {
   const tag = MARK_TAG[mark];
   splitRangeBoundaries(range);
-  const nodes = selectedTextNodes(root, range);
+  const nodes = selectedInlineNodes(root, range);
   const active = nodes.length > 0 && nodes.every(node => markAncestor(node, root, tag) !== null);
   const opposite = mark === 'subscript' ? MARK_TAG.superscript : mark === 'superscript' ? MARK_TAG.subscript : null;
   for (const node of nodes) {
@@ -242,9 +272,108 @@ export const unsetLink = (root: HTMLElement, range: Range): void => {
   });
 };
 
-/** Removes every mark, span style, highlight and link from the selected text. */
+/** Attribute holding the id of the comment a span of text is anchored to. */
+export const COMMENT_ATTRIBUTE = 'data-comment';
+
+/** A valid comment id: letters, digits, `_` and `-`. */
+export const COMMENT_ID = /^[\w-]{1,64}$/;
+
+/** Selector of every comment anchor. */
+export const COMMENT_SELECTOR = `span[${COMMENT_ATTRIBUTE}]`;
+
+/** Whether an element anchors a comment; comment anchors are not formatting. */
+const isCommentAnchor = (element: HTMLElement) => element.tagName === 'SPAN' && element.hasAttribute(COMMENT_ATTRIBUTE);
+
+/**
+ * Anchors a comment to the selected text. Text that already belongs to another comment keeps it, so comments may
+ * overlap.
+ * @returns whether any text was selected.
+ */
+export const addCommentAnchor = (root: HTMLElement, range: Range, id: string): boolean =>
+  !range.collapsed &&
+  eachSelectedText(root, range, node => {
+    const existing = ancestorWithin(node, root, element => element.getAttribute(COMMENT_ATTRIBUTE) === id);
+    if (!existing) wrapText(node, 'span').setAttribute(COMMENT_ATTRIBUTE, id);
+  });
+
+// ---------------------------------------------------------------------------------------------------------------
+// Tracked changes
+
+/** Attribute holding the id of a tracked change; inserted and deleted text of one edit share it. */
+export const CHANGE_ATTRIBUTE = 'data-change';
+
+/** A valid change id. */
+export const CHANGE_ID = /^[\w-]{1,64}$/;
+
+/** Selector of every tracked insertion and deletion. */
+export const CHANGE_SELECTOR = `ins[${CHANGE_ATTRIBUTE}], del[${CHANGE_ATTRIBUTE}]`;
+
+/** Who made a tracked change and when, written on its `<ins>` or `<del>`. */
+export interface ChangeMark {
+  /** Id shared by the parts of one edit. */
+  id: string;
+  /** Name of the author; may be empty. */
+  author: string;
+  /** When the change was made, as an ISO 8601 string. */
+  time: string;
+}
+
+/** Whether an element is a tracked insertion or deletion; tracked changes are not formatting. */
+const isChangeMark = (element: HTMLElement) =>
+  (element.tagName === 'INS' || element.tagName === 'DEL') && element.hasAttribute(CHANGE_ATTRIBUTE);
+
+/** Wraps a node in a tracked insertion or deletion element. */
+const wrapChange = (node: ChildNode, tag: 'ins' | 'del', mark: ChangeMark) => {
+  const element = wrapText(node, tag);
+  element.setAttribute(CHANGE_ATTRIBUTE, mark.id);
+  element.setAttribute('data-author', mark.author);
+  element.setAttribute('data-time', mark.time);
+};
+
+/** Tracked deletion around `node`, if any. */
+export const deletionAncestor = (node: Node, root: HTMLElement): HTMLElement | null =>
+  ancestorWithin(node, root, element => element.tagName === 'DEL' && element.hasAttribute(CHANGE_ATTRIBUTE));
+
+/** Marks the text and inline atoms of a range as inserted, unless they already are. */
+export const markInserted = (root: HTMLElement, range: Range, mark: ChangeMark): void => {
+  if (range.collapsed) return;
+  eachSelectedText(root, range, node => {
+    const existing = ancestorWithin(node, root, element => element.tagName === 'INS' && isChangeMark(element));
+    if (!existing) wrapChange(node, 'ins', mark);
+  });
+};
+
+/**
+ * Deletes a range the tracked way: text the same author inserted while tracking is removed for real, other text is
+ * marked as deleted and stays visible until the deletion is accepted.
+ * @returns whether anything was selected.
+ */
+export const markDeleted = (root: HTMLElement, range: Range, mark: ChangeMark): boolean =>
+  !range.collapsed &&
+  eachSelectedText(root, range, node => {
+    const inserted = ancestorWithin(node, root, element => element.tagName === 'INS' && isChangeMark(element));
+    if (inserted && inserted.getAttribute('data-author') === mark.author) {
+      node.remove();
+      return;
+    }
+    if (!deletionAncestor(node, root)) wrapChange(node, 'del', mark);
+  });
+
+/**
+ * Accepts or rejects tracked changes: accepting keeps inserted text and drops deleted text, rejecting does the
+ * opposite. Blocks left empty by removed text are kept, like Word keeps the paragraph.
+ */
+export const resolveChanges = (elements: HTMLElement[], accept: boolean): void => {
+  for (const element of elements) {
+    const keep = (element.tagName === 'INS') === accept;
+    if (keep) unwrap(element);
+    else element.remove();
+  }
+};
+
+/** Removes every mark, span style, highlight and link from the selected text; comment anchors and changes stay. */
 export const clearMarks = (root: HTMLElement, range: Range): void => {
-  const isFormatting = (element: HTMLElement) => FORMATTING_TAGS.has(element.tagName);
+  const isFormatting = (element: HTMLElement) => FORMATTING_TAGS.has(element.tagName) && !isCommentAnchor(element);
   eachSelectedText(root, range, node => {
     let mark = ancestorWithin(node, root, isFormatting);
     while (mark) {
@@ -309,6 +438,33 @@ export const applyTextCase = (root: HTMLElement, range: Range, mode: TextCase): 
     if (node.data !== next) node.data = next;
   }
   return true;
+};
+
+/**
+ * Rewrites the selected text node by node, so every mark around it stays; each call also receives the character
+ * before the node in the same block, so rules that depend on word boundaries work across formatting.
+ *
+ * @returns whether any text was selected.
+ */
+export const transformSelectedText = (
+  root: HTMLElement,
+  range: Range,
+  transform: (text: string, previous: string) => string
+): boolean => {
+  splitRangeBoundaries(range);
+  const nodes = selectedTextNodes(root, range);
+  let previous = '';
+  let previousBlock: HTMLElement | null = null;
+  for (const node of nodes) {
+    const block = closestTextBlock(node, root);
+    if (block !== previousBlock) previous = '';
+    const source = node.data;
+    const result = transform(source, previous);
+    if (result !== source) node.data = result;
+    previous = source.at(-1) ?? previous;
+    previousBlock = block;
+  }
+  return nodes.length > 0;
 };
 
 /** Which marks apply to `node`. */

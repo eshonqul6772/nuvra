@@ -1,6 +1,14 @@
 import { toggleBlockquote, toggleCodeBlock } from './blocks';
-import { closestTag, closestTextBlock, createElement, isText, renameElement, syncTrailingBreak } from './dom';
-import { type Caret, startCaret } from './editing';
+import {
+  closestTag,
+  closestTextBlock,
+  createElement,
+  createVariable,
+  isText,
+  renameElement,
+  syncTrailingBreak
+} from './dom';
+import { type Caret, insertInlineAtCaret, startCaret } from './editing';
 import { type ListKind, activeListKind, closestListItem, toggleList, toggleTaskItem } from './lists';
 import {
   DEFAULT_HIGHLIGHT_COLOR,
@@ -81,6 +89,9 @@ const BLOCK_RULES: Array<{ pattern: RegExp; kind: BlockRuleKind }> = [
   { pattern: /^```$/, kind: 'codeBlock' },
   { pattern: /^(?:---|—-|___ |\*\*\* )$/, kind: 'rule' }
 ];
+
+/** A typed `{{name}}` placeholder, completed by its last brace. */
+const VARIABLE_PLACEHOLDER = /\{\{\s*([\p{L}\p{N}_.-]{1,64})\s*\}\}$/u;
 
 /** URL followed by the space that was just typed, not already part of a link. */
 const AUTOLINK = /(?:^|\s)((?:https?:\/\/|www\.)[^\s]+[^\s.,;:!?)])\s$/;
@@ -238,17 +249,44 @@ const autolinkRule = (root: HTMLElement, before: TextBefore, range: Range): Inpu
   };
 };
 
+/** Matches a typed `{{name}}` of a known variable and turns it into the variable chip. */
+const variableRule = (
+  root: HTMLElement,
+  before: TextBefore,
+  isKnownVariable: (name: string) => boolean
+): InputRule | null => {
+  const match = before.text.match(VARIABLE_PLACEHOLDER);
+  const name = match?.[1];
+  if (!match || match.index === undefined || !name || !isKnownVariable(name)) return null;
+  const from = match.index;
+  return () => {
+    const target = rangeOf(before, from, before.text.length);
+    if (!target) return { caret: null };
+    target.deleteContents();
+    target.collapse(true);
+    return { caret: insertInlineAtCaret(root, target, createVariable(name)) };
+  };
+};
+
 /**
  * Looks for a rule completed by the character that was just typed. The returned function performs the change,
  * so the caller can record an undo step first. Rules never apply inside code.
+ *
+ * @param isKnownVariable Whether a typed `{{name}}` names a template variable of the editor.
  */
-export const matchInputRule = (root: HTMLElement, range: Range, typed: string): InputRule | null => {
+export const matchInputRule = (
+  root: HTMLElement,
+  range: Range,
+  typed: string,
+  isKnownVariable: (name: string) => boolean = () => false
+): InputRule | null => {
   const block = closestTextBlock(range.startContainer, root);
   if (!block || !range.collapsed || closestTag(range.startContainer, root, 'CODE')) return null;
   const before = readTextBefore(block, range);
   if (!before.text) return null;
 
   const rule =
+    (typed === '}' && block.tagName !== 'PRE' ? variableRule(root, before, isKnownVariable) : null) ??
     (BLOCK_RULE_TRIGGERS.has(typed) ? blockRule(root, block, before) : null) ??
     (MARK_RULE_TRIGGERS.includes(typed) ? inlineMarkRule(root, before) : null) ??
     (typed === ' ' ? autolinkRule(root, before, range) : null);

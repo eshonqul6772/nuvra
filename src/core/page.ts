@@ -51,6 +51,10 @@ export interface PageSettings {
   footer?: PageHeaderFooter;
   /** Watermark drawn behind the text of every page; omitted while the document has none. */
   watermark?: PageWatermark;
+  /** Whether the first page shows no header, footer or page number, as on title pages and letterheads. */
+  differentFirstPage?: boolean;
+  /** Number printed on the first page; the following pages count on from it. Defaults to 1. */
+  firstPageNumber?: number;
 }
 
 /** Page geometry in CSS pixels, ready for layout. */
@@ -131,6 +135,16 @@ export const createHeaderFooter = (): PageHeaderFooter => ({ left: '', center: '
 export const hasHeaderFooterText = (value: PageHeaderFooter | undefined): boolean =>
   Boolean(value && (value.left || value.center || value.right));
 
+/** Largest first page number the page setup accepts. */
+export const MAX_FIRST_PAGE_NUMBER = 9999;
+
+/** Number printed on a sheet, counted from 1 for the first sheet. */
+export const pageNumberOf = (page: PageSettings, sheet: number): number => sheet + (page.firstPageNumber ?? 1) - 1;
+
+/** Whether the header, footer and page number are drawn on a sheet, counted from 1 for the first sheet. */
+export const showsRunningTexts = (page: PageSettings, sheet: number): boolean =>
+  !(page.differentFirstPage && sheet === 1);
+
 /** Tokens a header or footer text may contain, replaced when the text is drawn on a page. */
 export const HEADER_FOOTER_TOKENS = ['page', 'pages', 'date', 'title'] as const;
 
@@ -139,9 +153,9 @@ export type HeaderFooterToken = (typeof HEADER_FOOTER_TOKENS)[number];
 
 /** Values the tokens of a header or footer are replaced with. */
 export interface HeaderFooterContext {
-  /** Number of the page the text is drawn on. */
+  /** Number printed on the page the text is drawn on. */
   page: number;
-  /** Number of pages in the document. */
+  /** Number of pages in the document, as Word counts them: every sheet, whatever number it prints. */
   pages: number;
   /** Document title. */
   title: string;

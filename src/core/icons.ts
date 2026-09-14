@@ -7,13 +7,16 @@
 export type IconName =
   | 'a-arrow-down'
   | 'a-arrow-up'
+  | 'banknote'
   | 'between-horizontal-end'
   | 'between-horizontal-start'
   | 'between-vertical-end'
   | 'between-vertical-start'
   | 'bold'
+  | 'braces'
   | 'calendar-days'
   | 'case-sensitive'
+  | 'check'
   | 'chevron-down'
   | 'chevron-right'
   | 'chevron-up'
@@ -36,17 +39,21 @@ export type IconName =
   | 'languages'
   | 'link'
   | 'list'
+  | 'list-checks'
   | 'list-indent-decrease'
   | 'list-indent-increase'
   | 'list-ordered'
   | 'list-todo'
   | 'loader-circle'
   | 'maximize-2'
+  | 'message-square'
+  | 'message-square-plus'
   | 'minimize-2'
   | 'minus'
   | 'move-horizontal'
   | 'omega'
   | 'paintbrush'
+  | 'panel-left'
   | 'panel-top'
   | 'panel-top-dashed'
   | 'pencil'
@@ -60,12 +67,14 @@ export type IconName =
   | 'rectangle-vertical'
   | 'redo-2'
   | 'remove-formatting'
+  | 'reply'
   | 'rows-2'
   | 'ruler'
   | 'scissors'
   | 'scroll-text'
   | 'search'
   | 'separator-horizontal'
+  | 'signature'
   | 'square-code'
   | 'square-split-vertical'
   | 'strikethrough'
@@ -73,6 +82,7 @@ export type IconName =
   | 'superscript'
   | 'table-cells-merge'
   | 'table-cells-split'
+  | 'table-of-contents'
   | 'text-align-center'
   | 'text-align-end'
   | 'text-align-justify'
@@ -104,6 +114,11 @@ export const ICONS: Readonly<Record<IconName, readonly IconElement[]>> = {
     ['path', { d: 'M18 16V7' }],
     ['path', { d: 'm14 11 4-4 4 4' }]
   ],
+  banknote: [
+    ['rect', { width: '20', height: '12', x: '2', y: '6', rx: '2' }],
+    ['circle', { cx: '12', cy: '12', r: '2' }],
+    ['path', { d: 'M6 12h.01M18 12h.01' }]
+  ],
   'between-horizontal-end': [
     ['rect', { width: '13', height: '7', x: '3', y: '3', rx: '1' }],
     ['path', { d: 'm22 15-3-3 3-3' }],
@@ -125,6 +140,10 @@ export const ICONS: Readonly<Record<IconName, readonly IconElement[]>> = {
     ['rect', { width: '7', height: '13', x: '14', y: '8', rx: '1' }]
   ],
   bold: [['path', { d: 'M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8' }]],
+  braces: [
+    ['path', { d: 'M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1' }],
+    ['path', { d: 'M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1' }]
+  ],
   'calendar-days': [
     ['path', { d: 'M8 2v3' }],
     ['path', { d: 'M16 2v3' }],
@@ -143,6 +162,7 @@ export const ICONS: Readonly<Record<IconName, readonly IconElement[]>> = {
     ['path', { d: 'M3.304 13h6.392' }],
     ['circle', { cx: '18.5', cy: '12.5', r: '3.5' }]
   ],
+  check: [['path', { d: 'M20 6 9 17l-5-5' }]],
   'chevron-down': [['path', { d: 'm6 9 6 6 6-6' }]],
   'chevron-right': [['path', { d: 'm9 18 6-6-6-6' }]],
   'chevron-up': [['path', { d: 'm18 15-6-6-6 6' }]],
@@ -279,6 +299,13 @@ export const ICONS: Readonly<Record<IconName, readonly IconElement[]>> = {
     ['path', { d: 'M8 12h13' }],
     ['path', { d: 'M8 19h13' }]
   ],
+  'list-checks': [
+    ['path', { d: 'M13 5h8' }],
+    ['path', { d: 'M13 12h8' }],
+    ['path', { d: 'M13 19h8' }],
+    ['path', { d: 'm3 17 2 2 4-4' }],
+    ['path', { d: 'm3 7 2 2 4-4' }]
+  ],
   'list-indent-decrease': [
     ['path', { d: 'M21 5H11' }],
     ['path', { d: 'M21 12H11' }],
@@ -307,6 +334,24 @@ export const ICONS: Readonly<Record<IconName, readonly IconElement[]>> = {
     ['rect', { x: '3', y: '4', width: '6', height: '6', rx: '1' }]
   ],
   'loader-circle': [['path', { d: 'M21 12a9 9 0 1 1-6.219-8.56' }]],
+  'message-square': [
+    [
+      'path',
+      {
+        d: 'M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z'
+      }
+    ]
+  ],
+  'message-square-plus': [
+    [
+      'path',
+      {
+        d: 'M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z'
+      }
+    ],
+    ['path', { d: 'M12 8v6' }],
+    ['path', { d: 'M9 11h6' }]
+  ],
   'maximize-2': [
     ['path', { d: 'M15 3h6v6' }],
     ['path', { d: 'm21 3-7 7' }],
@@ -347,6 +392,10 @@ export const ICONS: Readonly<Record<IconName, readonly IconElement[]>> = {
         d: 'M9 8c-1.804 2.71-3.97 3.46-6.583 3.948a.507.507 0 0 0-.302.819l7.32 8.883a1 1 0 0 0 1.185.204C12.735 20.405 16 16.792 16 15'
       }
     ]
+  ],
+  'panel-left': [
+    ['rect', { width: '18', height: '18', x: '3', y: '3', rx: '2' }],
+    ['path', { d: 'M9 3v18' }]
   ],
   'panel-top': [
     ['rect', { width: '18', height: '18', x: '3', y: '3', rx: '2' }],
@@ -416,6 +465,10 @@ export const ICONS: Readonly<Record<IconName, readonly IconElement[]>> = {
     ['path', { d: 'm15 14 5-5-5-5' }],
     ['path', { d: 'M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13' }]
   ],
+  reply: [
+    ['path', { d: 'M20 18v-2a4 4 0 0 0-4-4H4' }],
+    ['path', { d: 'm9 17-5-5 5-5' }]
+  ],
   'remove-formatting': [
     ['path', { d: 'M4 7V4h16v3' }],
     ['path', { d: 'M5 20h6' }],
@@ -466,6 +519,15 @@ export const ICONS: Readonly<Record<IconName, readonly IconElement[]>> = {
     ['path', { d: 'M3 12h18' }],
     ['path', { d: 'm8 8 4-4 4 4' }]
   ],
+  signature: [
+    [
+      'path',
+      {
+        d: 'm21 17-2.156-1.868A.5.5 0 0 0 18 15.5v.5a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1c0-2.545-3.991-3.97-8.5-4a1 1 0 0 0 0 5c4.153 0 4.745-11.295 5.708-13.5a2.5 2.5 0 1 1 3.31 3.284'
+      }
+    ],
+    ['path', { d: 'M3 21h18' }]
+  ],
   'square-code': [
     ['path', { d: 'm10 9-3 3 3 3' }],
     ['path', { d: 'm14 15 3-3-3-3' }],
@@ -513,6 +575,14 @@ export const ICONS: Readonly<Record<IconName, readonly IconElement[]>> = {
     ['path', { d: 'M3 15h18' }],
     ['path', { d: 'M3 9h18' }],
     ['rect', { width: '18', height: '18', x: '3', y: '3', rx: '2' }]
+  ],
+  'table-of-contents': [
+    ['path', { d: 'M16 5H3' }],
+    ['path', { d: 'M16 12H3' }],
+    ['path', { d: 'M16 19H3' }],
+    ['path', { d: 'M21 5h.01' }],
+    ['path', { d: 'M21 12h.01' }],
+    ['path', { d: 'M21 19h.01' }]
   ],
   'text-align-center': [
     ['path', { d: 'M21 5H3' }],

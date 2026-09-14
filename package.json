@@ -1,6 +1,6 @@
 {
   "name": "nuvra",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Word-style document editor for Vue 3: page view, tables, images, find & replace, print and Word export.",
   "keywords": [
     "vue",
@@ -46,7 +46,8 @@
     "type-check": "vue-tsc --noEmit",
     "biome": "biome check .",
     "biome:fix": "biome check --write .",
-    "prepublishOnly": "run-s biome type-check build"
+    "test": "vitest run",
+    "prepublishOnly": "run-s biome type-check test build"
   },
   "peerDependencies": {
     "vue": "^3.5.0"
@@ -55,9 +56,11 @@
     "@biomejs/biome": "2.3.12",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/tsconfig": "^0.9.1",
+    "happy-dom": "^20.14.5",
     "npm-run-all2": "^9.0.2",
     "typescript": "~6.0.3",
     "vite": "^8.2.2",
+    "vitest": "^5.0.0",
     "vue": "^3.5.41",
     "vue-tsc": "^3.3.11"
   },

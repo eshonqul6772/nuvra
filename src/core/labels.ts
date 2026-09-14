@@ -3,11 +3,12 @@ import { type InjectionKey, type Ref, computed, inject, provide, shallowRef } fr
 import { en } from './locales/en';
 import { ru } from './locales/ru';
 import { type EditorLabelKey, uz } from './locales/uz';
+import { uzCyrl } from './locales/uz-cyrl';
 
 export type { EditorLabelKey };
 
-/** Languages the editor interface is available in. */
-export type EditorLocaleCode = 'uz' | 'en' | 'ru';
+/** Languages the editor interface is available in: Uzbek in Latin and Cyrillic script, English and Russian. */
+export type EditorLocaleCode = 'uz' | 'uz-Cyrl' | 'en' | 'ru';
 
 /**
  * A built-in interface language. Locales only select one of the translations shipped with the editor; the texts
@@ -24,17 +25,24 @@ export interface EditorLocale {
 export type EditorLocaleInput = EditorLocale | EditorLocaleCode;
 
 /** Texts of every built-in language. */
-const MESSAGES: Readonly<Record<EditorLocaleCode, Readonly<Record<EditorLabelKey, string>>>> = { uz, en, ru };
+const MESSAGES: Readonly<Record<EditorLocaleCode, Readonly<Record<EditorLabelKey, string>>>> = {
+  uz,
+  'uz-Cyrl': uzCyrl,
+  en,
+  ru
+};
 
 /** Uzbek (Latin) interface. */
 export const uzLocale: EditorLocale = Object.freeze({ code: 'uz', name: 'O‘zbekcha' });
+/** Uzbek (Cyrillic) interface. */
+export const uzCyrlLocale: EditorLocale = Object.freeze({ code: 'uz-Cyrl', name: 'Ўзбекча' });
 /** English interface. */
 export const enLocale: EditorLocale = Object.freeze({ code: 'en', name: 'English' });
 /** Russian interface. */
 export const ruLocale: EditorLocale = Object.freeze({ code: 'ru', name: 'Русский' });
 
 /** Every built-in locale, in the order they are offered. */
-export const editorLocales: ReadonlyArray<EditorLocale> = Object.freeze([uzLocale, enLocale, ruLocale]);
+export const editorLocales: ReadonlyArray<EditorLocale> = Object.freeze([uzLocale, uzCyrlLocale, enLocale, ruLocale]);
 
 /** Language used when neither the editor nor the app chose one. */
 const DEFAULT_LOCALE: EditorLocaleCode = 'uz';
@@ -94,5 +102,10 @@ export const useEditorLabels = (locale?: () => EditorLocaleInput | undefined) =>
   /** Label followed by its keyboard shortcut in parentheses, for button tooltips. */
   const withShortcut = (key: EditorLabelKey, shortcut: string): string => `${t(key)} (${formatShortcut(shortcut)})`;
 
-  return { t, withShortcut };
+  return {
+    t,
+    withShortcut,
+    /** Code of the editor's language, e.g. for numbers and dates written into the document. */
+    locale: code
+  };
 };

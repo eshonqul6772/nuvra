@@ -467,6 +467,66 @@
   cursor: col-resize;
 }
 
+/* Editable document: signature tables have no borders on paper; faint dashed lines show their cells while editing. */
+.doc-canvas .doc-content table[data-type="signature"] td,
+.doc-canvas .doc-content table[data-type="signature"] th {
+  border: 1px dashed #d0d5dd;
+}
+
+/* Editable document: a footnote reference opens its note when clicked. */
+.doc-canvas .doc-content sup[data-footnote] {
+  padding: 0 1px;
+  border-radius: 2px;
+  color: var(--nuvra-color-primary, #409eff);
+  cursor: pointer;
+}
+
+.doc-canvas .doc-content sup[data-footnote]:hover {
+  background: var(--nuvra-color-primary-soft, #ecf5ff);
+}
+
+/* Editable document: commented text; resolved comments lose the highlight, the comment at the caret is stronger. */
+.doc-canvas .doc-content span[data-comment] {
+  border-bottom: 2px solid #f5c542;
+  background: rgb(250 204 21 / 22%);
+}
+
+.doc-canvas .doc-content span[data-comment].is-active {
+  background: rgb(250 204 21 / 45%);
+}
+
+.doc-canvas .doc-content span[data-comment].is-resolved {
+  border-bottom: 0;
+  background: none;
+}
+
+/* Editable document: the table of contents is generated, so a faint band marks it as one block. */
+.doc-canvas .doc-content table[data-type="toc"] {
+  outline: 1px dashed #d0d5dd;
+  outline-offset: 2px;
+}
+
+/* Editable document: template variable chips, labelled from data-label by the engine. */
+.doc-canvas .doc-content .doc-variable {
+  padding: 0 3px;
+  border-radius: 3px;
+  color: var(--nuvra-color-primary, #409eff);
+  background: color-mix(in srgb, var(--nuvra-color-primary, #409eff) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nuvra-color-primary, #409eff) 35%, transparent);
+  cursor: default;
+  user-select: all;
+}
+
+.doc-canvas .doc-content .doc-variable::before {
+  content: attr(data-label);
+}
+
+.doc-canvas .doc-content .doc-variable.is-unknown {
+  color: #b54708;
+  background: rgb(247 144 9 / 12%);
+  box-shadow: inset 0 0 0 1px rgb(247 144 9 / 40%);
+}
+
 /* Editable document: task checkboxes are clickable, links are edited like text. */
 .doc-canvas .doc-content ul[data-type="taskList"] input[type="checkbox"] {
   cursor: pointer;

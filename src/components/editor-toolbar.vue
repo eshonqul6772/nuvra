@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 
+import { formatLongDate, formatShortDate } from '../core/dates';
+import { DOCUMENT_TEMPLATES, type DocumentTemplateId, getDocumentTemplate } from '../core/document-templates';
 import type { HeadingTag, TextAlign, TextDirection } from '../core/engine/blocks';
 import type { DocumentEngine } from '../core/engine/engine';
 import type { MarkName, TextCase } from '../core/engine/marks';
 import type { IconName } from '../core/icons';
 import { type EditorLabelKey, formatShortcut, useEditorLabels } from '../core/labels';
+import { formatAmountInWords } from '../core/numbers';
 import { type PageSettings, hasHeaderFooterText } from '../core/page';
+import { SIGNATURE_PRESETS, type SignaturePreset, buildSignatureBlock } from '../core/signature';
+import type { TemplateVariable } from '../core/templates';
 import type { DocumentMenuAction } from '../core/types';
 import { type EditorUiState, normalizeFontFamily } from '../core/ui-state';
 import EditorColorPicker from './editor-color-picker.vue';
@@ -24,7 +29,7 @@ import EditorTablePicker from './editor-table-picker.vue';
  */
 defineOptions({ name: 'EditorToolbar' });
 
-const { t, withShortcut } = useEditorLabels();
+const { t, withShortcut, locale } = useEditorLabels();
 
 interface Props {
   /** Read-only document: every editing control is disabled. */
@@ -37,6 +42,16 @@ interface Props {
   fullscreen: boolean;
   /** Whether the formatting marks (pilcrows) are shown in the document. */
   marksVisible: boolean;
+  /** Whether the navigation panel with the headings is open. */
+  outlineVisible: boolean;
+  /** Whether the host keeps comments (`v-model:comments`); the comment buttons are hidden otherwise. */
+  commentsEnabled: boolean;
+  /** Whether the comments panel is open. */
+  commentsVisible: boolean;
+  /** Whether edits are recorded as tracked changes. */
+  trackChanges: boolean;
+  /** Whether the tracked changes panel is open. */
+  changesVisible: boolean;
   /** Current page settings, edited in the page setup popover. */
   page: PageSettings;
   /** Whether the ruler is shown above the sheet. */
@@ -47,6 +62,8 @@ interface Props {
   state: EditorUiState;
   /** Whether images are being uploaded, shown on the upload button. */
   uploading: boolean;
+  /** Template variables offered by the variable menu; the menu is hidden without any. */
+  variables: ReadonlyArray<TemplateVariable>;
 }
 
 const props = defineProps<Props>();
@@ -284,7 +301,10 @@ const stepFontSize = (direction: 1 | -1) => {
 };
 
 /** Changes the letter case of the selected text. */
-const setTextCase = (command: unknown) => props.engine.changeTextCase(command as TextCase);
+const setTextCase = (command: unknown) => {
+  if (command === 'toCyrillic' || command === 'toLatin') props.engine.transliterate(command);
+  else props.engine.changeTextCase(command as TextCase);
+};
 
 /** Picks up the formatting at the caret, or drops it again when the painter is already carrying one. */
 const toggleFormatPainter = () => {
@@ -355,26 +375,56 @@ const runTextCommand = (command: unknown) => {
   else props.engine.clearFormatting();
 };
 
-/** Today's date as `dd.mm.yyyy`, the format used in Uzbek documents. */
-const formatToday = () => {
-  const today = new Date();
-  const twoDigits = (value: number) => String(value).padStart(2, '0');
-  return `${twoDigits(today.getDate())}.${twoDigits(today.getMonth() + 1)}.${today.getFullYear()}`;
-};
-
-/** Inserts an element from the insert menu: page break, today's date or a horizontal rule. */
+/**
+ * Inserts an element from the insert menu: page break, today's date in the short or long form, the amount before the
+ * caret in words, or a horizontal rule.
+ */
 const insertBlock = (command: unknown) => {
   switch (command) {
     case 'pageBreak':
       props.engine.insertPageBreak();
       break;
     case 'date':
-      props.engine.insertText(formatToday());
+      props.engine.insertText(formatShortDate(new Date()));
+      break;
+    case 'dateLong':
+      props.engine.insertText(formatLongDate(new Date(), locale.value));
+      break;
+    case 'amountInWords':
+      props.engine.replaceAmount(value => formatAmountInWords(value, locale.value));
+      break;
+    case 'tableOfContents':
+      // Page numbers come from the editor's layout, so the editor builds the table.
+      emit('menu', 'tableOfContents');
+      break;
+    case 'footnote':
+      // The editor opens the form for the note's text.
+      emit('menu', 'footnote');
       break;
     default:
       props.engine.insertHorizontalRule();
   }
 };
+
+/** Inserts a built-in document template at the caret, in the editor's language. */
+const insertTemplate = (command: unknown) =>
+  props.engine.insertContent(getDocumentTemplate(command as DocumentTemplateId, locale.value).html, { asBlocks: true });
+
+/** Switches the numbered list at the caret between simple and legal (1.1.1) numbering, making it a list if needed. */
+const setNumbering = (command: unknown) => {
+  if (!props.state.orderedList) props.engine.toggleList('orderedList');
+  props.engine.setListNumbering(command === 'legal' ? 'legal' : 'default');
+};
+
+/** How a variable is written in text, shown next to its label in the variable menu. */
+const placeholderOf = (name: string) => `{{${name}}}`;
+
+/** Inserts the chip of the chosen template variable. */
+const insertVariable = (command: unknown) => props.engine.insertVariable(String(command));
+
+/** Inserts the chosen signature block, written in the editor's language. */
+const insertSignature = (command: unknown) =>
+  props.engine.insertContent(buildSignatureBlock(command as SignaturePreset, t), { asBlocks: true });
 
 /** Forwards a document menu choice to the editor. */
 const onMenuCommand = (command: unknown) => emit('menu', command as DocumentMenuAction);
@@ -707,6 +757,12 @@ defineExpose({
           <EditorDropdownItem v-for="option in TEXT_CASES" :key="option.value" :command="option.value">
             {{ t(option.label) }}
           </EditorDropdownItem>
+          <EditorDropdownItem command="toCyrillic" divided>
+            {{ t('editor.transliterate.toCyrillic') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="toLatin">
+            {{ t('editor.transliterate.toLatin') }}
+          </EditorDropdownItem>
         </template>
       </EditorDropdown>
       <EditorColorPicker
@@ -825,6 +881,26 @@ defineExpose({
       >
         <EditorIcon :name="button.icon" :size="16" />
       </button>
+      <EditorDropdown :disabled="locked" @command="setNumbering">
+        <button
+          type="button"
+          class="doc-tb-button doc-tb-button--caret"
+          :aria-label="t('editor.numbering')"
+          :disabled="locked"
+          :title="t('editor.numbering')"
+          @mousedown.prevent
+        >
+          <EditorIcon name="chevron-down" :size="12" />
+        </button>
+        <template #menu>
+          <EditorDropdownItem command="default" :class="{ 'is-selected': state.orderedList && !state.legalNumbering }">
+            {{ t('editor.numbering.default') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="legal" :class="{ 'is-selected': state.legalNumbering }">
+            {{ t('editor.numbering.legal') }}
+          </EditorDropdownItem>
+        </template>
+      </EditorDropdown>
       <button
         type="button"
         class="doc-tb-button"
@@ -972,6 +1048,45 @@ defineExpose({
         </div>
       </EditorPopover>
 
+      <EditorDropdown v-if="variables.length" :disabled="locked" :max-height="LONG_MENU_HEIGHT" @command="insertVariable">
+        <button
+          type="button"
+          class="doc-tb-button doc-tb-button--select"
+          :aria-label="t('editor.variables')"
+          :disabled="locked"
+          :title="t('editor.variables')"
+          @mousedown.prevent
+        >
+          <EditorIcon name="braces" :size="16" />
+          <EditorIcon name="chevron-down" :size="12" />
+        </button>
+        <template #menu>
+          <EditorDropdownItem v-for="variable in variables" :key="variable.name" :command="variable.name">
+            {{ variable.label }}
+            <span class="doc-menu__hint">{{ placeholderOf(variable.name) }}</span>
+          </EditorDropdownItem>
+        </template>
+      </EditorDropdown>
+
+      <EditorDropdown :disabled="locked" @command="insertSignature">
+        <button
+          type="button"
+          class="doc-tb-button doc-tb-button--select"
+          :aria-label="t('editor.signature')"
+          :disabled="locked"
+          :title="t('editor.signature')"
+          @mousedown.prevent
+        >
+          <EditorIcon name="signature" :size="16" />
+          <EditorIcon name="chevron-down" :size="12" />
+        </button>
+        <template #menu>
+          <EditorDropdownItem v-for="preset in SIGNATURE_PRESETS" :key="preset.value" :command="preset.value">
+            {{ t(preset.label) }}
+          </EditorDropdownItem>
+        </template>
+      </EditorDropdown>
+
       <EditorDropdown :disabled="locked" @command="insertBlock">
         <button
           type="button"
@@ -998,6 +1113,22 @@ defineExpose({
             <EditorIcon name="calendar-days" :size="14" />
             {{ t('editor.insertDate') }}
           </EditorDropdownItem>
+          <EditorDropdownItem command="dateLong">
+            <EditorIcon name="calendar-days" :size="14" />
+            {{ t('editor.insertDateLong') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="amountInWords">
+            <EditorIcon name="banknote" :size="14" />
+            {{ t('editor.amountInWords') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="footnote" divided>
+            <EditorIcon name="superscript" :size="14" />
+            {{ t('editor.footnote') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="tableOfContents">
+            <EditorIcon name="table-of-contents" :size="14" />
+            {{ t(state.tableOfContents ? 'editor.toc.update' : 'editor.toc') }}
+          </EditorDropdownItem>
         </template>
       </EditorDropdown>
     </div>
@@ -1005,6 +1136,58 @@ defineExpose({
     <span class="doc-toolbar__spacer" />
 
     <div class="doc-toolbar__group doc-toolbar__group--end">
+      <!-- Buttons the host application adds to the toolbar. -->
+      <slot />
+      <button
+        type="button"
+        class="doc-tb-button"
+        :class="{ 'is-active': trackChanges }"
+        :aria-label="t('editor.track')"
+        :aria-pressed="trackChanges"
+        :disabled="locked"
+        :title="t('editor.track')"
+        @mousedown.prevent
+        @click="emit('menu', 'trackChanges')"
+      >
+        <EditorIcon name="pencil" :size="16" />
+      </button>
+      <button
+        type="button"
+        class="doc-tb-button"
+        :class="{ 'is-active': changesVisible }"
+        :aria-label="t('editor.changes')"
+        :aria-pressed="changesVisible"
+        :title="t('editor.changes')"
+        @mousedown.prevent
+        @click="emit('menu', 'changes')"
+      >
+        <EditorIcon name="list-checks" :size="16" />
+      </button>
+      <template v-if="commentsEnabled">
+        <button
+          type="button"
+          class="doc-tb-button"
+          :aria-label="t('editor.comment.add')"
+          :disabled="locked || !state.textSelected"
+          :title="t('editor.comment.add')"
+          @mousedown.prevent
+          @click="emit('menu', 'addComment')"
+        >
+          <EditorIcon name="message-square-plus" :size="16" />
+        </button>
+        <button
+          type="button"
+          class="doc-tb-button"
+          :class="{ 'is-active': commentsVisible }"
+          :aria-label="t('editor.comments')"
+          :aria-pressed="commentsVisible"
+          :title="t('editor.comments')"
+          @mousedown.prevent
+          @click="emit('menu', 'comments')"
+        >
+          <EditorIcon name="message-square" :size="16" />
+        </button>
+      </template>
       <button
         type="button"
         class="doc-tb-button"
@@ -1017,6 +1200,24 @@ defineExpose({
       >
         <EditorIcon name="search" :size="16" />
       </button>
+
+      <EditorDropdown placement="bottom-end" :disabled="locked" @command="insertTemplate">
+        <button
+          type="button"
+          class="doc-tb-button"
+          :aria-label="t('editor.templates')"
+          :disabled="locked"
+          :title="t('editor.templates')"
+          @mousedown.prevent
+        >
+          <EditorIcon name="file-text" :size="16" />
+        </button>
+        <template #menu>
+          <EditorDropdownItem v-for="template in DOCUMENT_TEMPLATES" :key="template.id" :command="template.id">
+            {{ t(template.label) }}
+          </EditorDropdownItem>
+        </template>
+      </EditorDropdown>
 
       <EditorPopover placement="bottom-end" :width="340">
         <template #reference>
@@ -1073,7 +1274,15 @@ defineExpose({
             <EditorIcon name="file-down" :size="14" />
             {{ t('editor.exportHtml') }}
           </EditorDropdownItem>
-          <EditorDropdownItem command="ruler" divided :class="{ 'is-selected': rulerVisible }">
+          <EditorDropdownItem command="importWord" :disabled="locked">
+            <EditorIcon name="file-text" :size="14" />
+            {{ t('editor.importWord') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="outline" divided :class="{ 'is-selected': outlineVisible }">
+            <EditorIcon name="panel-left" :size="14" />
+            {{ t('editor.outline') }}
+          </EditorDropdownItem>
+          <EditorDropdownItem command="ruler" :class="{ 'is-selected': rulerVisible }">
             <EditorIcon name="ruler" :size="14" />
             {{ t('editor.ruler') }}
           </EditorDropdownItem>

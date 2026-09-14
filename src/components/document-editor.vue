@@ -1,8 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 
-import { DocumentEngine } from '../core/engine/engine';
-import { type EditorLocaleInput, useEditorLabels } from '../core/labels';
+import { type DocumentComment, createCommentId, sortComments } from '../core/comments';
+import { formatLongDate, formatShortDate } from '../core/dates';
+import { templateVariableLabel } from '../core/document-templates';
+import { DocumentEngine, type TrackedChange } from '../core/engine/engine';
+import type { ListKind } from '../core/engine/lists';
+import type { SheetFootnote } from '../core/footnotes';
+import type { IconName } from '../core/icons';
+import { type EditorLabelKey, type EditorLocaleInput, useEditorLabels } from '../core/labels';
+import {
+  type OutlineHeading,
+  TABLE_OF_CONTENTS_DEPTH,
+  type TableOfContentsEntry,
+  buildTableOfContents
+} from '../core/outline';
 import {
   type DocumentViewMode,
   type PageSettings,
@@ -10,17 +22,26 @@ import {
   ZOOM_MIN,
   ZOOM_STEP,
   createPageSettings,
-  getPageMetrics
+  getPageMetrics,
+  pageNumberOf
 } from '../core/page';
 import { type PaginationController, createPagination, splitIntoPages } from '../core/pagination';
+import { SIGNATURE_PRESETS, buildSignatureBlock } from '../core/signature';
+import type { SlashCommand } from '../core/slash-commands';
+import type { TemplateVariable } from '../core/templates';
 import type { DocumentImageUploadHandler, DocumentMenuAction } from '../core/types';
 import { EMPTY_UI_STATE, type EditorUiState, isSameUiState } from '../core/ui-state';
 import EditorBubbleMenus from './editor-bubble-menus.vue';
 // biome-ignore lint/style/useImportType: Component is rendered in the template.
 import EditorCanvas from './editor-canvas.vue';
+import EditorChanges from './editor-changes.vue';
+import EditorComments from './editor-comments.vue';
 import EditorContextMenu from './editor-context-menu.vue';
 // biome-ignore lint/style/useImportType: Component is rendered in the template.
 import EditorFindBar from './editor-find-bar.vue';
+import EditorFootnoteForm from './editor-footnote-form.vue';
+import EditorOutline from './editor-outline.vue';
+import EditorSlashMenu from './editor-slash-menu.vue';
 import EditorStatusBar from './editor-status-bar.vue';
 // biome-ignore lint/style/useImportType: Component is rendered in the template.
 import EditorToolbar from './editor-toolbar.vue';
@@ -43,6 +64,8 @@ interface Props {
   autofocus?: boolean;
   /** Gray space around the page or web sheet that separates the document from the editor frame. */
   canvasPadding?: CssSize;
+  /** Name written as the author of new comments, replies and tracked changes. */
+  author?: string;
   /** View shown first; form fields use the lighter web view. */
   defaultViewMode?: DocumentViewMode;
   /** Makes the document read-only and disables every editing control. */
@@ -61,17 +84,22 @@ interface Props {
   minHeight?: CssSize;
   /** Text shown while the document is empty; falls back to the translated default placeholder. */
   placeholder?: string;
+  /** Commands of the host application, listed first in the `/` menu. */
+  slashCommands?: readonly SlashCommand[];
   /** Shows the ruler above the sheet in the page view; users can also toggle it in the document menu. */
   ruler?: boolean;
   /** Used as the print title and the exported file name. */
   title?: string;
   /** Uploads an inserted image and resolves with its URL; without it images are embedded as data URLs. */
   uploadImage?: DocumentImageUploadHandler;
+  /** Template variables the user can insert; typing `{{name}}` of one of them inserts it as well. */
+  variables?: readonly TemplateVariable[];
 }
 
 const props = withDefaults(defineProps<Props>(), {
   autofocus: false,
   canvasPadding: 50,
+  author: '',
   defaultViewMode: 'page',
   disabled: false,
   height: 760,
@@ -82,11 +110,13 @@ const props = withDefaults(defineProps<Props>(), {
   minHeight: 240,
   placeholder: '',
   ruler: true,
+  slashCommands: () => [],
   title: '',
-  uploadImage: undefined
+  uploadImage: undefined,
+  variables: () => []
 });
 
-const { t } = useEditorLabels(() => props.locale);
+const { t, locale } = useEditorLabels(() => props.locale);
 
 interface Emits {
   /** The editing surface lost focus; pending model updates have already been written. */
@@ -95,15 +125,31 @@ interface Emits {
   focus: [];
   /** An image was rejected by validation or its upload failed. */
   uploadError: [error: unknown];
+  /** A Word file could not be read; the document is left unchanged. */
+  importError: [error: unknown];
 }
 
 const emit = defineEmits<Emits>();
+
+defineSlots<{
+  /**
+   * Buttons of the host application, placed at the start of the toolbar's right-hand group. `engine` runs editing
+   * commands, `state` describes the formatting at the caret and `disabled` tells whether editing is possible.
+   */
+  toolbar?: (props: { engine: DocumentEngine; state: EditorUiState; disabled: boolean }) => unknown;
+}>();
 
 /** Document HTML. An empty document is written as an empty string; typing updates it after a short delay. */
 const model = defineModel<string>({ default: '' });
 
 /** Paper size, orientation, and margins used by the page view, printing, and export. */
 const page = defineModel<PageSettings>('page', { default: createPageSettings });
+
+/** Whether edits are recorded as tracked changes; the toolbar can switch it. */
+const trackChanges = defineModel<boolean>('trackChanges', { default: false });
+
+/** Comments on the document; binding it turns the comment tools on. The HTML keeps only their anchors. */
+const comments = defineModel<DocumentComment[] | undefined>('comments', { default: undefined });
 
 /** Delay before typing is serialized into the model; serializing the whole document per keystroke is expensive. */
 const MODEL_UPDATE_DELAY = 200;
@@ -119,6 +165,8 @@ const SOURCE_LINE_ENDINGS = /(<\/(?:p|h[1-6]|li|ul|ol|blockquote|pre|table|thead
 const toCssSize = (value: CssSize) => (typeof value === 'number' ? `${value}px` : value);
 
 const sectionRef = ref<HTMLElement>();
+/** Area under the toolbar that panels and the `/` menu are positioned in. */
+const bodyRef = ref<HTMLElement>();
 const canvasRef = ref<InstanceType<typeof EditorCanvas>>();
 const toolbarRef = ref<InstanceType<typeof EditorToolbar>>();
 const findBarRef = ref<InstanceType<typeof EditorFindBar>>();
@@ -145,6 +193,8 @@ const replaceOpen = ref(false);
 /** Whether images are currently being read or uploaded. */
 const uploading = ref(false);
 const pageCount = ref(1);
+/** Footnotes of every sheet, as laid out by pagination. */
+const footnotePages = shallowRef<SheetFootnote[][]>([]);
 /** Page that contains the caret, shown in the status bar. */
 const currentPage = ref(1);
 /** Toolbar snapshot; replaced only when a visible value changes, so the toolbar does not re-render per keystroke. */
@@ -332,6 +382,7 @@ const exportSnapshot = () => {
     // break the pages exactly where the editor shows them.
     pages:
       instance && viewMode.value === 'page' ? splitIntoPages(instance.root, metrics.value, pageCount.value) : undefined,
+    footnotes: footnotePages.value,
     page: page.value,
     title: props.title || t('editor.document')
   };
@@ -343,13 +394,366 @@ const print = async () => {
   printHtml(buildPrintableHtml(exportSnapshot()));
 };
 
-/** Downloads the document as a standalone HTML page or as a Word-compatible `.doc` file. */
+/** Downloads the document as a standalone HTML page or as a Word document (`.docx`); both modules load on demand. */
 const exportDocument = async (format: 'html' | 'word') => {
-  const { buildPrintableHtml, buildWordHtml, downloadFile, toFileName } = await import('../core/export');
+  const { buildPrintableHtml, downloadFile, toFileName } = await import('../core/export');
   const snapshot = exportSnapshot();
   const fileName = toFileName(snapshot.title);
-  if (format === 'word') downloadFile(buildWordHtml(snapshot), `${fileName}.doc`, 'application/msword');
-  else downloadFile(buildPrintableHtml(snapshot), `${fileName}.html`, 'text/html;charset=utf-8');
+  if (format === 'word') {
+    const { DOCX_MIME, buildDocx } = await import('../core/docx/export');
+    downloadFile(await buildDocx(snapshot), `${fileName}.docx`, DOCX_MIME);
+  } else {
+    downloadFile(buildPrintableHtml(snapshot), `${fileName}.html`, 'text/html;charset=utf-8');
+  }
+};
+
+/** Delay after the last edit before the navigation panel re-reads the headings. */
+const OUTLINE_REFRESH_DELAY = 300;
+
+/** Whether the navigation panel is open. */
+const outlineVisible = ref(false);
+/** Headings shown in the navigation panel, with the page each starts on. */
+const outline = shallowRef<Array<OutlineHeading & { page: number | null }>>([]);
+let outlineTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Page number printed on the sheet a top-level block starts on, or `null` outside the page view. */
+const pageOfBlock = (element: HTMLElement) => {
+  if (viewMode.value !== 'page') return null;
+  const { height, gap } = metrics.value;
+  return pageNumberOf(page.value, Math.floor((element.offsetTop + 1) / (height + gap)) + 1);
+};
+
+/** Re-reads the headings for the navigation panel; skipped while the panel is closed. */
+const refreshOutline = () => {
+  clearTimeout(outlineTimer);
+  outlineTimer = undefined;
+  const instance = engine.value;
+  if (!instance || !outlineVisible.value) return;
+  outline.value = instance.getOutline().map(heading => ({ ...heading, page: pageOfBlock(heading.element) }));
+};
+
+/** Refreshes the navigation panel once editing pauses. */
+const scheduleOutlineRefresh = () => {
+  if (!outlineVisible.value) return;
+  clearTimeout(outlineTimer);
+  outlineTimer = setTimeout(refreshOutline, OUTLINE_REFRESH_DELAY);
+};
+
+/** Waits until pagination has laid out the latest change. */
+const afterLayout = () =>
+  new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+/** Lines of the table of contents for the current headings and layout. */
+const tableOfContentsEntries = (instance: DocumentEngine) =>
+  instance
+    .getOutline(TABLE_OF_CONTENTS_DEPTH)
+    .map(heading => ({ level: heading.level, text: heading.text, page: pageOfBlock(heading.element) }));
+
+/** HTML of a table of contents with the given lines, as wide as the text area of the page. */
+const tableOfContentsHtml = (entries: TableOfContentsEntry[]) => {
+  const { width, marginLeft, marginRight } = metrics.value;
+  return buildTableOfContents(entries, {
+    title: t('editor.toc'),
+    emptyText: t('editor.toc.empty'),
+    width: viewMode.value === 'page' ? width - marginLeft - marginRight : undefined
+  });
+};
+
+/**
+ * Inserts the table of contents at the caret, or refreshes the existing one. A new table moves the headings after it,
+ * so its page numbers are corrected once the document has been laid out again.
+ */
+const updateTableOfContents = async () => {
+  const instance = engine.value;
+  if (!instance || props.disabled) return;
+  const existed = instance.hasTableOfContents;
+  const entries = tableOfContentsEntries(instance);
+  instance.setTableOfContents(tableOfContentsHtml(entries));
+  if (existed || viewMode.value !== 'page') return;
+  await afterLayout();
+  const corrected = tableOfContentsEntries(instance);
+  if (corrected.some((entry, index) => entry.page !== entries[index]?.page)) {
+    // Part of the same insertion: undo removes the table in one step.
+    instance.setTableOfContents(tableOfContentsHtml(corrected), { addToHistory: false });
+  }
+};
+
+/** Whether the host keeps comments with `v-model:comments`; without it the comment tools are hidden. */
+const commentsEnabled = computed(() => comments.value !== undefined);
+/** Whether the comments panel is open. */
+const commentsVisible = ref(false);
+/** Id of the comment whose text is anchored but whose first message is still being written. */
+const draftCommentId = ref<string | null>(null);
+/** Ids of the comments anchored in the document, in document order. */
+const anchoredCommentIds = shallowRef<string[]>([]);
+const anchoredCommentSet = computed(() => new Set(anchoredCommentIds.value));
+/** Comments in the order of their anchors. */
+const sortedComments = computed(() => sortComments(comments.value ?? [], anchoredCommentIds.value));
+
+/** Re-reads the anchors and redraws resolved and active comments. */
+const syncComments = () => {
+  const instance = engine.value;
+  if (!instance || !commentsEnabled.value) return;
+  anchoredCommentIds.value = instance.getCommentIds();
+  const resolved = new Set((comments.value ?? []).filter(comment => comment.resolved).map(comment => comment.id));
+  instance.decorateComments(resolved, commentsVisible.value ? uiState.value.comment || null : null);
+};
+
+/**
+ * Starts a comment on the selected text. The text is anchored right away, so the selection survives focus moving to
+ * the comment form; abandoning the comment undoes the anchor.
+ */
+const startComment = () => {
+  const instance = engine.value;
+  if (!instance || props.disabled || !commentsEnabled.value || draftCommentId.value) return;
+  const id = createCommentId();
+  if (!instance.addComment(id)) return;
+  draftCommentId.value = id;
+  commentsVisible.value = true;
+};
+
+/** Writes the first message of the drafted comment. */
+const saveComment = (text: string) => {
+  const id = draftCommentId.value;
+  if (!id) return;
+  const comment: DocumentComment = { id, text, createdAt: new Date().toISOString(), replies: [] };
+  if (props.author) comment.author = props.author;
+  comments.value = [...(comments.value ?? []), comment];
+  draftCommentId.value = null;
+  syncComments();
+};
+
+/** Abandons the drafted comment and takes its anchor back. */
+const cancelComment = () => {
+  if (!draftCommentId.value) return;
+  draftCommentId.value = null;
+  engine.value?.undo();
+};
+
+/** Applies a change to one comment of the model. */
+const updateComment = (id: string, change: (comment: DocumentComment) => DocumentComment) => {
+  comments.value = (comments.value ?? []).map(comment => (comment.id === id ? change(comment) : comment));
+};
+
+const replyToComment = (id: string, text: string) =>
+  updateComment(id, comment => ({
+    ...comment,
+    replies: [
+      ...(comment.replies ?? []),
+      {
+        id: createCommentId(),
+        text,
+        createdAt: new Date().toISOString(),
+        ...(props.author ? { author: props.author } : {})
+      }
+    ]
+  }));
+
+const resolveComment = (id: string, resolved: boolean) => updateComment(id, comment => ({ ...comment, resolved }));
+
+/** Deletes a comment together with its anchor. */
+const removeComment = (id: string) => {
+  engine.value?.removeComment(id);
+  comments.value = (comments.value ?? []).filter(comment => comment.id !== id);
+};
+
+watch([comments, commentsVisible, () => uiState.value.comment], syncComments, { deep: true });
+
+/** Whether the tracked changes panel is open. */
+const changesVisible = ref(false);
+/** Tracked changes shown in the panel. */
+const trackedChanges = shallowRef<TrackedChange[]>([]);
+
+/** Re-reads the tracked changes for the panel; skipped while it is closed. */
+const refreshChanges = () => {
+  if (changesVisible.value && engine.value) trackedChanges.value = engine.value.getChanges();
+};
+
+/** Accepts or rejects one change, or all of them. */
+const resolveChanges = (accept: boolean, id?: string) => {
+  engine.value?.resolveChanges(accept, id);
+  refreshChanges();
+};
+
+/** The engine records changes with the current author while tracking is on. */
+watch([trackChanges, () => props.author, engine], ([enabled, author, instance]) =>
+  instance?.setTrackChanges(enabled, author)
+);
+
+/** Footnote whose note is being edited; `isNew` when it was inserted just now and has no text yet. */
+const footnoteTarget = shallowRef<{ element: HTMLElement; isNew: boolean; id: number } | null>(null);
+/** Counts opened footnote forms, so every opening gets a fresh form. */
+let footnoteForms = 0;
+
+/** Inserts a footnote at the caret and opens the form for its text. */
+const startFootnote = () => {
+  const instance = engine.value;
+  if (!instance || props.disabled) return;
+  const element = instance.insertFootnote('');
+  if (element) footnoteTarget.value = { element, isNew: true, id: ++footnoteForms };
+};
+
+/** Saves the note; a new footnote left empty is taken back. */
+const saveFootnote = (text: string) => {
+  const target = footnoteTarget.value;
+  footnoteTarget.value = null;
+  if (!target || !engine.value) return;
+  if (!text && target.isNew) engine.value.undo();
+  else if (text) engine.value.setFootnoteText(target.element, text);
+  engine.value.focus();
+};
+
+/** Leaves the form; a new footnote without text is taken back. */
+const cancelFootnote = () => {
+  const target = footnoteTarget.value;
+  footnoteTarget.value = null;
+  if (target?.isNew) engine.value?.undo();
+  engine.value?.focus();
+};
+
+const removeFootnote = () => {
+  const target = footnoteTarget.value;
+  footnoteTarget.value = null;
+  if (target) engine.value?.removeFootnote(target.element);
+  engine.value?.focus();
+};
+
+/** A click on a footnote reference opens its note. */
+const onDocumentClick = (event: MouseEvent) => {
+  const reference = (event.target as Element | null)?.closest?.<HTMLElement>('sup[data-footnote]');
+  if (reference && engine.value?.root.contains(reference))
+    footnoteTarget.value = { element: reference, isNew: false, id: ++footnoteForms };
+};
+
+/** Commands of the `/` menu: the host's own first, then blocks, lists, fields and signature blocks. */
+const slashCommands = computed<SlashCommand[]>(() => {
+  const heading = (level: 1 | 2 | 3): SlashCommand => ({
+    id: `h${level}`,
+    label: t('editor.heading', { level }),
+    icon: 'pilcrow',
+    keywords: ['heading', 'sarlavha', 'заголовок'],
+    run: engine => engine.setBlockType(`H${level}`)
+  });
+  const list = (kind: ListKind, icon: IconName, label: EditorLabelKey): SlashCommand => ({
+    id: kind,
+    label: t(label),
+    icon,
+    keywords: ['list', 'ro‘yxat', 'список'],
+    run: engine => engine.toggleList(kind)
+  });
+  return [
+    ...props.slashCommands,
+    {
+      id: 'paragraph',
+      label: t('editor.paragraph'),
+      icon: 'pilcrow',
+      keywords: ['text', 'matn', 'текст'],
+      run: engine => engine.setBlockType('P')
+    },
+    heading(1),
+    heading(2),
+    heading(3),
+    list('bulletList', 'list', 'editor.bulletList'),
+    list('orderedList', 'list-ordered', 'editor.orderedList'),
+    list('taskList', 'list-todo', 'editor.taskList'),
+    { id: 'quote', label: t('editor.quote'), icon: 'quote', run: engine => engine.toggleBlockquote() },
+    { id: 'code', label: t('editor.codeBlock'), icon: 'square-code', run: engine => engine.toggleCodeBlock() },
+    {
+      id: 'table',
+      label: t('editor.table.insert'),
+      icon: 'grid-3x3',
+      keywords: ['jadval', 'таблица'],
+      run: engine => engine.insertTable(3, 3, false)
+    },
+    {
+      id: 'hr',
+      label: t('editor.horizontalRule'),
+      icon: 'separator-horizontal',
+      run: engine => engine.insertHorizontalRule()
+    },
+    {
+      id: 'pageBreak',
+      label: t('editor.pageBreak'),
+      icon: 'square-split-vertical',
+      run: engine => engine.insertPageBreak()
+    },
+    {
+      id: 'footnote',
+      label: t('editor.footnote'),
+      icon: 'superscript',
+      keywords: ['snoska', 'сноска', 'izoh'],
+      run: () => startFootnote()
+    },
+    {
+      id: 'toc',
+      label: t(uiState.value.tableOfContents ? 'editor.toc.update' : 'editor.toc'),
+      icon: 'table-of-contents',
+      keywords: ['mundarija', 'оглавление', 'contents'],
+      run: () => void updateTableOfContents()
+    },
+    {
+      id: 'date',
+      label: t('editor.insertDate'),
+      icon: 'calendar-days',
+      keywords: ['sana', 'дата'],
+      run: engine => engine.insertText(formatShortDate(new Date()))
+    },
+    {
+      id: 'dateLong',
+      label: t('editor.insertDateLong'),
+      icon: 'calendar-days',
+      keywords: ['sana', 'дата'],
+      run: engine => engine.insertText(formatLongDate(new Date(), locale.value))
+    },
+    ...SIGNATURE_PRESETS.map(
+      (preset): SlashCommand => ({
+        id: `signature-${preset.value}`,
+        label: t(preset.label),
+        icon: 'signature',
+        keywords: ['imzo', 'подпись', 'signature'],
+        run: engine => engine.insertContent(buildSignatureBlock(preset.value, t), { asBlocks: true })
+      })
+    ),
+    ...props.variables.map(
+      (variable): SlashCommand => ({
+        id: `variable-${variable.name}`,
+        label: variable.label,
+        icon: 'braces',
+        keywords: [variable.name],
+        run: engine => engine.insertVariable(variable.name)
+      })
+    )
+  ];
+});
+
+/** Hidden file input of the "open Word file" menu entry. */
+const wordInputRef = ref<HTMLInputElement>();
+
+/**
+ * Replaces the document with the content and page setup of a Word file, as one undo step for the content. A file that
+ * cannot be read leaves the document unchanged and is reported through `importError`.
+ */
+const importWord = async (file: File) => {
+  const instance = engine.value;
+  if (!instance || props.disabled) return;
+  try {
+    const { readDocx } = await import('../core/docx/import');
+    const result = await readDocx(await file.arrayBuffer());
+    instance.setContent(result.html, { addToHistory: true, emitUpdate: true });
+    page.value = { ...result.page, ...(page.value.watermark ? { watermark: page.value.watermark } : {}) };
+    flushModel();
+    instance.focus('start');
+  } catch (error) {
+    emit('importError', error);
+  }
+};
+
+/** Opens the Word file picked in the file dialog and resets the input so the same file can be picked again. */
+const onWordFilePicked = (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (file) void importWord(file);
 };
 
 /** Runs an action chosen in the toolbar's "more" menu. */
@@ -367,8 +771,35 @@ const onMenu = (action: DocumentMenuAction) => {
     case 'exportWord':
       void exportDocument('word');
       break;
+    case 'importWord':
+      wordInputRef.value?.click();
+      break;
     case 'ruler':
       rulerVisible.value = !rulerVisible.value;
+      break;
+    case 'outline':
+      outlineVisible.value = !outlineVisible.value;
+      refreshOutline();
+      break;
+    case 'tableOfContents':
+      void updateTableOfContents();
+      break;
+    case 'comments':
+      commentsVisible.value = !commentsVisible.value;
+      if (!commentsVisible.value) cancelComment();
+      break;
+    case 'addComment':
+      startComment();
+      break;
+    case 'footnote':
+      startFootnote();
+      break;
+    case 'trackChanges':
+      trackChanges.value = !trackChanges.value;
+      break;
+    case 'changes':
+      changesVisible.value = !changesVisible.value;
+      refreshChanges();
       break;
     case 'formattingMarks':
       formattingMarks.value = !formattingMarks.value;
@@ -429,6 +860,10 @@ const onKeydown = (event: KeyboardEvent) => {
   } else if (mod && key === 'KeyK' && !props.disabled && !sourceMode.value) {
     event.preventDefault();
     toolbarRef.value?.openLink();
+  } else if (mod && event.altKey && key === 'KeyM' && commentsEnabled.value) {
+    // Word's shortcut for a new comment.
+    event.preventDefault();
+    startComment();
   } else if (mod && key === 'KeyP') {
     event.preventDefault();
     void print();
@@ -452,13 +887,21 @@ watch(model, value => {
   instance.setContent(value);
   refreshStats();
   pagination?.schedule();
+  scheduleOutlineRefresh();
+  syncComments();
 });
+
+/** Page numbers in the navigation panel follow the layout. */
+watch([pageCount, viewMode, () => page.value.firstPageNumber], scheduleOutlineRefresh);
 
 /** Keeps the engine's editability in sync with the `disabled` prop. */
 watch(
   () => props.disabled,
   disabled => engine.value?.setEditable(!disabled)
 );
+
+/** Variable chips show the labels of the current variable list, in the current language. */
+watch([() => props.variables, locale], () => engine.value?.refreshVariables(), { deep: true });
 
 /** Paginates in page view only; the web view is one continuous sheet. */
 watch([metrics, viewMode], ([nextMetrics, mode]) => pagination?.setMetrics(mode === 'page' ? nextMetrics : null));
@@ -492,12 +935,17 @@ onMounted(() => {
     editable: !props.disabled,
     maxLength: props.maxLength,
     placeholder: () => props.placeholder || t('editor.placeholder'),
-    onImageFiles: files => void insertImages(files)
+    onImageFiles: files => void insertImages(files),
+    variableLabel: name =>
+      props.variables.find(variable => variable.name === name)?.label ?? templateVariableLabel(name, locale.value)
   });
   root.setAttribute('aria-label', props.title || t('editor.document'));
   pagination = createPagination(root, {
     onPageCount: count => {
       pageCount.value = count;
+    },
+    onFootnotes: sheets => {
+      footnotePages.value = sheets;
     },
     isComposing: () => instance.composing
   });
@@ -506,6 +954,9 @@ onMounted(() => {
     instance.on('update', () => {
       scheduleModelUpdate();
       pagination?.schedule();
+      scheduleOutlineRefresh();
+      syncComments();
+      refreshChanges();
     }),
     instance.on('selection', scheduleUiSync),
     instance.on('composition', active => {
@@ -517,6 +968,8 @@ onMounted(() => {
       emit('blur');
     })
   );
+  root.addEventListener('click', onDocumentClick);
+  disposers.push(() => root.removeEventListener('click', onDocumentClick));
   engine.value = instance;
   refreshStats();
   scheduleUiSync();
@@ -527,6 +980,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (dirty) flushModel();
   cancelAnimationFrame(uiSyncFrame);
+  clearTimeout(outlineTimer);
   for (const dispose of disposers) dispose();
   pagination?.destroy();
   engine.value?.destroy();
@@ -547,6 +1001,12 @@ defineExpose({
     flushModel();
     return lastEmitted;
   },
+  /** Replaces the document with the content and page setup of a `.docx` file. */
+  importWord,
+  /** Inserts the chip of a template variable at the selection. */
+  insertVariable: (name: string) => engine.value?.insertVariable(name),
+  /** Inserts the table of contents at the selection, or refreshes the existing one. */
+  updateTableOfContents,
   /** Opens the print dialog. */
   print
 });
@@ -570,18 +1030,26 @@ defineExpose({
         :find-open="findOpen"
         :fullscreen="fullscreen"
         :marks-visible="formattingMarks"
+        :outline-visible="outlineVisible"
+        :comments-enabled="commentsEnabled"
+        :comments-visible="commentsVisible"
+        :track-changes="trackChanges"
+        :changes-visible="changesVisible"
         :page="page"
         :ruler-visible="rulerVisible"
         :source-mode="sourceMode"
         :state="uiState"
         :uploading="uploading"
+        :variables="props.variables"
         @find="toggleFind"
         @insert-images="insertImages"
         @menu="onMenu"
         @update:page="page = $event"
-      />
+      >
+        <slot name="toolbar" :engine="engine" :state="uiState" :disabled="disabled || sourceMode" />
+      </EditorToolbar>
 
-      <div class="document-editor__body">
+      <div ref="bodyRef" class="document-editor__body">
         <EditorCanvas
           v-show="!sourceMode"
           ref="canvasRef"
@@ -589,14 +1057,13 @@ defineExpose({
           :disabled="disabled"
           :document-title="title || t('editor.document')"
           :engine="engine"
-          :footer="page.footer"
-          :header="page.header"
+          :footnotes="footnotePages"
           :indents="{ left: uiState.indentLeft, right: uiState.indentRight, firstLine: uiState.indentFirstLine }"
           :metrics="metrics"
+          :page="page"
           :page-count="pageCount"
           :ruler-visible="rulerVisible"
           :view-mode="viewMode"
-          :watermark="page.watermark"
           :zoom="zoom"
           @resize="onCanvasResize"
           @update-indents="engine?.setParagraphIndents($event)"
@@ -611,6 +1078,51 @@ defineExpose({
           :aria-label="t('editor.source')"
           :readonly="disabled"
         />
+        <EditorSlashMenu
+          v-if="engine && bodyRef && !disabled && !sourceMode"
+          :commands="slashCommands"
+          :container="bodyRef"
+          :engine="engine"
+        />
+        <EditorFootnoteForm
+          v-if="engine && bodyRef && footnoteTarget && !sourceMode"
+          :key="footnoteTarget.id"
+          :container="bodyRef"
+          :readonly="disabled"
+          :reference="footnoteTarget.element"
+          @cancel="cancelFootnote"
+          @remove="removeFootnote"
+          @save="saveFootnote"
+        />
+        <EditorOutline
+          v-if="engine && outlineVisible && !sourceMode"
+          :headings="outline"
+          @close="outlineVisible = false"
+          @select="engine.goToHeading($event)"
+        />
+        <EditorChanges
+          v-if="engine && changesVisible && !sourceMode"
+          :changes="trackedChanges"
+          :readonly="disabled"
+          @close="changesVisible = false"
+          @resolve="resolveChanges"
+          @select="engine.selectChange($event)"
+        />
+        <EditorComments
+          v-if="engine && commentsEnabled && commentsVisible && !sourceMode"
+          :active-id="uiState.comment || null"
+          :anchored="anchoredCommentSet"
+          :comments="sortedComments"
+          :drafting="draftCommentId !== null"
+          :readonly="disabled"
+          @add="saveComment"
+          @cancel-draft="cancelComment"
+          @close="commentsVisible = false; cancelComment()"
+          @remove="removeComment"
+          @reply="replyToComment"
+          @resolve="resolveComment"
+          @select="engine.selectComment($event)"
+        />
         <EditorFindBar
           v-if="engine && findOpen && !sourceMode"
           ref="findBarRef"
@@ -621,6 +1133,14 @@ defineExpose({
         />
         <div v-if="uploading" class="document-editor__uploading" role="status">{{ t('editor.uploading') }}</div>
       </div>
+
+      <input
+        ref="wordInputRef"
+        type="file"
+        accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        hidden
+        @change="onWordFilePicked"
+      />
 
       <EditorStatusBar
         v-model:view-mode="viewMode"

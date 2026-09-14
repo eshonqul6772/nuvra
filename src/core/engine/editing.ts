@@ -1,6 +1,7 @@
 import { childOf, containerOf, splitBlock } from './blocks';
 import {
   ATOM_SELECTOR,
+  INLINE_ATOM_SELECTOR,
   TEXT_BLOCK_SELECTOR,
   closestTag,
   closestTextBlock,
@@ -14,6 +15,7 @@ import {
   isText,
   isTextBlock,
   isTrailingBreak,
+  isVisuallyEmpty,
   mergeAdjacentMarks,
   removeEmptyMarks,
   renameElement,
@@ -299,6 +301,53 @@ export const insertTextAtCaret = (root: HTMLElement, range: Range, text: string)
   container.insertBefore(node, after);
   if (isTextBlock(container)) syncTrailingBreak(container);
   return { node, offset: text.length };
+};
+
+/**
+ * Inserts an inline atom (a variable chip or a footnote reference) at a collapsed range, creating a paragraph if the caret sits between
+ * blocks. Code blocks hold plain text only, so nothing is inserted there.
+ * @returns the caret right after the element, or `null` when it could not be inserted.
+ */
+export const insertInlineAtCaret = (root: HTMLElement, range: Range, element: HTMLElement): Caret | null => {
+  let { startContainer: container, startOffset: offset } = range;
+  const block = closestTextBlock(container, root);
+  if (block?.tagName === 'PRE') return null;
+  if (!block && !isText(container)) {
+    const paragraph = createParagraph();
+    container.insertBefore(paragraph, container.childNodes[offset] ?? null);
+    container = paragraph;
+    offset = 0;
+  }
+  const target = document.createRange();
+  target.setStart(container, offset);
+  target.insertNode(element);
+  const parent = closestTextBlock(element, root);
+  if (parent) syncTrailingBreak(parent);
+  return { node: element.parentNode ?? root, offset: indexOf(element) + 1 };
+};
+
+/**
+ * Inline atom (variable chip or footnote reference) right before (`backward`) or right after the collapsed caret, with
+ * nothing visible in between, so Backspace and Delete remove it as one character in every browser.
+ */
+export const adjacentInlineAtom = (root: HTMLElement, range: Range, backward: boolean): HTMLElement | null => {
+  const block = closestTextBlock(range.startContainer, root);
+  if (!block || !range.collapsed) return null;
+  const chips = Array.from(block.querySelectorAll<HTMLElement>(INLINE_ATOM_SELECTOR));
+  for (const chip of backward ? chips.reverse() : chips) {
+    const side = range.comparePoint(chip, 0);
+    if (backward ? side >= 0 : side <= 0) continue;
+    const between = document.createRange();
+    if (backward) {
+      between.setStartAfter(chip);
+      between.setEnd(range.startContainer, range.startOffset);
+    } else {
+      between.setStart(range.startContainer, range.startOffset);
+      between.setEndBefore(chip);
+    }
+    return isVisuallyEmpty(between) ? chip : null;
+  }
+  return null;
 };
 
 /**

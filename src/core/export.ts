@@ -1,4 +1,5 @@
 import contentCss from '../styles/document-content.css?inline';
+import { type SheetFootnote, footnotesHtml } from './footnotes';
 import {
   type HeaderFooterContext,
   PAGE_SIZES,
@@ -8,7 +9,9 @@ import {
   WATERMARK_ANGLE,
   hasHeaderFooterText,
   hasWatermarkText,
+  pageNumberOf,
   renderHeaderFooter,
+  showsRunningTexts,
   watermarkFontSize
 } from './page';
 
@@ -21,20 +24,16 @@ interface DocumentSnapshot {
    * with real page numbers and breaks the pages exactly where the editor shows them.
    */
   pages?: string[];
+  /** Footnotes of every sheet of `pages`; without pages, the notes of all of them are printed after the document. */
+  footnotes?: SheetFootnote[][];
   /** Document title, used for the print title and file names. */
   title: string;
   /** Page size, orientation, margins and the running texts. */
   page: PageSettings;
 }
 
-/** Makes Word detect UTF-8 instead of the system code page. */
-const BYTE_ORDER_MARK = String.fromCharCode(0xfe_ff);
 /** Characters escaped when text is placed into HTML. */
 const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-/** Page break markup of the editor. */
-const PAGE_BREAK_PATTERN = /<div[^>]*data-type="page-break"[^>]*><\/div>/g;
-/** Page break markup Word understands. */
-const WORD_PAGE_BREAK = '<br clear="all" style="page-break-before: always">';
 /** Characters not allowed in file names on common systems. */
 const INVALID_FILE_NAME_CHARACTERS = /[\\/:*?"<>|]+/g;
 /** File name used when the title is empty. */
@@ -49,8 +48,6 @@ const PX_PER_MM = 96 / 25.4;
 const WATERMARK_OPACITY = 0.16;
 /** The three parts of a running text, in the order they are drawn. */
 const RUNNING_PARTS = ['left', 'center', 'right'] as const;
-/** Splits a running text at the page tokens, so they can become Word fields while the rest stays escaped text. */
-const PAGE_TOKEN_SPLIT = /(\{page\}|\{pages\})/g;
 /** Styles that keep the print iframe out of view without `display: none`, which would stop it from printing. */
 const HIDDEN_FRAME_STYLE: Partial<CSSStyleDeclaration> = {
   position: 'fixed',
@@ -119,14 +116,18 @@ const watermarkCss = (page: PageSettings, fixed: boolean): string => {
 };
 
 /** Sheets with their own header and footer, used when the editor knows where the pages break. */
-const sheetsHtml = (pages: string[], page: PageSettings, title: string): string =>
+const sheetsHtml = (pages: string[], page: PageSettings, title: string, footnotes: SheetFootnote[][] = []): string =>
   pages
     .map((content, index) => {
-      const context: HeaderFooterContext = { page: index + 1, pages: pages.length, title };
-      const header = runningHtml(page.header, 'header', context);
-      const footer = runningHtml(page.footer, 'footer', context);
+      const context: HeaderFooterContext = { page: pageNumberOf(page, index + 1), pages: pages.length, title };
+      const shown = showsRunningTexts(page, index + 1);
+      const header = shown ? runningHtml(page.header, 'header', context) : '';
+      const footer = shown ? runningHtml(page.footer, 'footer', context) : '';
       const watermark = watermarkHtml(page.watermark);
-      return `<section class="doc-sheet">${watermark}${header}<article class="doc-content">${content}</article>${footer}</section>`;
+      const notes = footnotes[index]?.length
+        ? `<div class="doc-sheet__notes">${footnotesHtml(footnotes[index] ?? [])}</div>`
+        : '';
+      return `<section class="doc-sheet">${watermark}${header}<article class="doc-content">${content}</article>${notes}${footer}</section>`;
     })
     .join('');
 
@@ -138,6 +139,7 @@ const sheetCss = (page: PageSettings) => {
 .doc-sheet { position: relative; box-sizing: border-box; width: ${width}mm; min-height: ${height}mm; padding: ${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm; overflow: hidden; background: #fff; break-after: page; }
 .doc-sheet:last-child { break-after: auto; }
 .doc-running { position: absolute; right: ${margins.right}mm; left: ${margins.left}mm; }
+.doc-sheet__notes { position: absolute; right: ${margins.right}mm; bottom: ${margins.bottom}mm; left: ${margins.left}mm; }
 .doc-running--header { top: ${runningEdge(margins.top)}mm; }
 .doc-running--footer { bottom: ${runningEdge(margins.bottom)}mm; }${RUNNING_CSS}${watermarkCss(page, false)}`;
 };
@@ -161,10 +163,10 @@ export const toFileName = (title: string): string =>
  * the pages break where the editor shows them; without them the document flows and the browser repeats one fixed
  * header and footer on every page.
  */
-export const buildPrintableHtml = ({ html, pages, title, page }: DocumentSnapshot): string => {
+export const buildPrintableHtml = ({ html, pages, footnotes, title, page }: DocumentSnapshot): string => {
   const paginated = pages !== undefined && pages.length > 0;
   const context: HeaderFooterContext = { page: 1, pages: 1, title };
-  const flow = `${watermarkHtml(page.watermark)}${runningHtml(page.header, 'header', context)}${runningHtml(page.footer, 'footer', context)}<article class="doc-content">${html}</article>`;
+  const flow = `${watermarkHtml(page.watermark)}${runningHtml(page.header, 'header', context)}${runningHtml(page.footer, 'footer', context)}<article class="doc-content">${html}</article>${footnotesHtml(footnotes?.flat() ?? [])}`;
   return `<!doctype html>
 <html lang="uz">
 <head>
@@ -172,70 +174,13 @@ export const buildPrintableHtml = ({ html, pages, title, page }: DocumentSnapsho
 <title>${escapeHtml(title)}</title>
 <style>${paginated ? sheetCss(page) : flowCss(page)} html, body { margin: 0; background: #fff; } ${contentCss}</style>
 </head>
-<body>${paginated && pages ? sheetsHtml(pages, page, title) : flow}</body>
+<body>${paginated && pages ? sheetsHtml(pages, page, title, footnotes) : flow}</body>
 </html>`;
 };
 
-/** Word field that counts pages; Word fills it in itself, so an exported document numbers its pages correctly. */
-const wordField = (code: 'PAGE' | 'NUMPAGES') => `<span style='mso-field-code:${code}'>1</span>`;
-
-/**
- * Watermark in the form Word writes its own watermarks in: a VML shape inside the header. Browsers skip it, because
- * it sits in a conditional comment only Word reads.
- */
-const wordWatermark = (watermark: PageWatermark | undefined): string => {
-  if (!hasWatermarkText(watermark) || !watermark) return '';
-  const rotation = watermark.diagonal ? 315 : 0;
-  return `<!--[if gte vml 1]><v:shapetype id="_x0000_t136" coordsize="21600,21600" o:spt="136" adj="10800" path="m@7,l@8,m@5,21600l@6,21600e"/><v:shape id="NuvraWatermark" type="#_x0000_t136" style='position:absolute;margin-left:0;margin-top:0;width:468pt;height:117pt;rotation:${rotation};z-index:-251658752;mso-position-horizontal:center;mso-position-horizontal-relative:margin;mso-position-vertical:center;mso-position-vertical-relative:margin' fillcolor="${escapeHtml(watermark.color)}" stroked="f"><v:fill opacity="${WATERMARK_OPACITY}"/><v:textpath style='font-family:"Times New Roman";font-size:1pt' string="${escapeHtml(watermark.text.trim())}"/></v:shape><![endif]-->`;
-};
-
-/** A running text for Word, where the page tokens become the Word fields Word counts itself. */
-const wordRunning = (
-  value: PageHeaderFooter | undefined,
-  place: 'header' | 'footer',
-  title: string,
-  extra = ''
-): string => {
-  const hasText = value !== undefined && hasHeaderFooterText(value);
-  if (!hasText && !extra) return '';
-  const render = (text: string) =>
-    text
-      .split(PAGE_TOKEN_SPLIT)
-      .map(chunk => {
-        if (chunk === '{page}') return wordField('PAGE');
-        if (chunk === '{pages}') return wordField('NUMPAGES');
-        return escapeHtml(renderHeaderFooter(chunk, { page: 1, pages: 1, title }));
-      })
-      .join('');
-  const [left, center, right] = RUNNING_PARTS.map(part => (hasText && value ? render(value[part]) : ''));
-  return `<div style='mso-element:${place}' id='${place === 'header' ? 'h1' : 'f1'}'>${extra}
-<table width="100%" style='border-collapse:collapse'><tr>
-<td style='border:none;padding:0'>${left}</td>
-<td style='border:none;padding:0;text-align:center'>${center}</td>
-<td style='border:none;padding:0;text-align:right'>${right}</td>
-</tr></table></div>`;
-};
-
-/** Word opens HTML saved with the Office namespaces as a regular document in print layout. */
-export const buildWordHtml = ({ html, title, page }: DocumentSnapshot): string => {
-  const body = html.replace(PAGE_BREAK_PATTERN, WORD_PAGE_BREAK);
-  const header = wordRunning(page.header, 'header', title, wordWatermark(page.watermark));
-  const footer = wordRunning(page.footer, 'footer', title);
-  const running = `${header ? ' mso-header: h1;' : ''}${footer ? ' mso-footer: f1;' : ''}`;
-  return `${BYTE_ORDER_MARK}<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head>
-<meta charset="utf-8">
-<title>${escapeHtml(title)}</title>
-<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
-<style>@page Section1 { ${pageRule(page)}${running} } div.Section1 { page: Section1; } ${contentCss}</style>
-</head>
-<body><div class="Section1 doc-content">${body}</div>${header}${footer}</body>
-</html>`;
-};
-
-/** Offers text content as a file download. */
-export const downloadFile = (content: string, fileName: string, type: string): void => {
-  const url = URL.createObjectURL(new Blob([content], { type }));
+/** Offers text or binary content as a file download. */
+export const downloadFile = (content: string | Blob, fileName: string, type: string): void => {
+  const url = URL.createObjectURL(content instanceof Blob ? content : new Blob([content], { type }));
   const link = document.createElement('a');
   link.href = url;
   link.download = fileName;

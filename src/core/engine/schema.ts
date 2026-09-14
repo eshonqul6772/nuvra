@@ -4,10 +4,17 @@
  * DOM is turned back into clean HTML.
  */
 import {
+  FOOTNOTE_ATTRIBUTE,
+  FOOTNOTE_SELECTOR,
+  INLINE_ATOM_SELECTOR,
   TRAILING_BREAK,
+  VARIABLE_ATTRIBUTE,
+  VARIABLE_SELECTOR,
   createElement,
+  createFootnote,
   createParagraph,
   createTrailingBreak,
+  createVariable,
   hasVisibleContent,
   isBreak,
   isElement,
@@ -19,6 +26,22 @@ import {
   syncTrailingBreak,
   unwrap
 } from './dom';
+import { CHANGE_ATTRIBUTE, CHANGE_ID, COMMENT_ATTRIBUTE, COMMENT_ID, COMMENT_SELECTOR } from './marks';
+
+/** Longest author name kept on a tracked change. */
+const MAX_AUTHOR_LENGTH = 100;
+
+/** A tracked change time as written by the editor or Word (ISO 8601). */
+const CHANGE_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z?$/;
+
+/** A valid template variable name: letters, digits, `_`, `.` and `-`, as used in `{{name}}`. */
+export const VARIABLE_NAME = /^[\p{L}\p{N}_.-]{1,64}$/u;
+
+/** Attribute holding the label a variable chip shows in the editor; editor-only. */
+export const VARIABLE_LABEL_ATTRIBUTE = 'data-label';
+
+/** Table kinds kept from loaded or pasted content; signature tables and the table of contents have no borders. */
+const TABLE_TYPES = new Set(['signature', 'toc']);
 
 /** Attribute pagination writes on blocks it moved to the next sheet; editor-only. */
 export const GAP_ATTRIBUTE = 'data-doc-gap';
@@ -299,6 +322,8 @@ const convertImage = (source: HTMLElement): Node[] => {
 /** Rebuilds a table row by row, keeping cell spans, header cells and pixel column widths. */
 const convertTable = (source: HTMLTableElement): HTMLElement => {
   const table = createElement('table');
+  const type = source.getAttribute('data-type');
+  if (type && TABLE_TYPES.has(type)) table.setAttribute('data-type', type);
   const widths = Array.from(source.querySelectorAll<HTMLElement>(':scope > colgroup > col, :scope > col')).map(col =>
     toPixels(col.style.width || col.getAttribute('width') || '')
   );
@@ -347,6 +372,14 @@ const convertNode = (source: Node, preformatted: boolean): Node[] => {
   const tag = source.tagName.toUpperCase();
   if (DROPPED_TAGS.has(tag)) return [];
   const content = () => convertChildren(source);
+  const variable = tag === 'SPAN' ? source.getAttribute(VARIABLE_ATTRIBUTE)?.trim() : undefined;
+  if (variable && VARIABLE_NAME.test(variable)) return applyInlineStyles(source, [createVariable(variable)]);
+  const footnote = tag === 'SUP' ? source.getAttribute(FOOTNOTE_ATTRIBUTE)?.trim() : undefined;
+  if (footnote !== undefined) return [createFootnote(footnote)];
+  const comment = tag === 'SPAN' ? source.getAttribute(COMMENT_ATTRIBUTE)?.trim() : undefined;
+  if (comment && COMMENT_ID.test(comment)) {
+    return wrap('span', applyInlineStyles(source, content()), { [COMMENT_ATTRIBUTE]: comment });
+  }
 
   switch (tag) {
     case 'P':
@@ -384,6 +417,8 @@ const convertNode = (source: Node, preformatted: boolean): Node[] => {
       const list = createElement(tag === 'OL' ? 'ol' : 'ul', task ? { 'data-type': 'taskList' } : {}, content());
       const start = Number.parseInt(source.getAttribute('start') ?? '', 10);
       if (tag === 'OL' && start > 1) list.setAttribute('start', String(start));
+      if (tag === 'OL' && source.getAttribute('data-numbering') === 'legal')
+        list.setAttribute('data-numbering', 'legal');
       return [list];
     }
     case 'LI':
@@ -418,12 +453,24 @@ const convertNode = (source: Node, preformatted: boolean): Node[] => {
     case 'DFN':
     case 'VAR':
       return wrap('em', applyInlineStyles(source, content()));
-    case 'U':
     case 'INS':
+    case 'DEL': {
+      // Tracked changes keep their element and who made them; other insertions and deletions are just formatting.
+      const change = source.getAttribute(CHANGE_ATTRIBUTE)?.trim();
+      if (change && CHANGE_ID.test(change)) {
+        const time = source.getAttribute('data-time') ?? '';
+        return wrap(tag.toLowerCase(), applyInlineStyles(source, content()), {
+          [CHANGE_ATTRIBUTE]: change,
+          'data-author': (source.getAttribute('data-author') ?? '').slice(0, MAX_AUTHOR_LENGTH),
+          'data-time': CHANGE_TIME.test(time) ? time : ''
+        });
+      }
+      return wrap(tag === 'INS' ? 'u' : 's', applyInlineStyles(source, content()));
+    }
+    case 'U':
       return wrap('u', applyInlineStyles(source, content()));
     case 'S':
     case 'STRIKE':
-    case 'DEL':
       return wrap('s', applyInlineStyles(source, content()));
     case 'CODE':
     case 'KBD':
@@ -577,6 +624,13 @@ const normalizeTextBlock = (block: HTMLElement): void => {
     if (right.isConnected) normalizeTextBlock(right);
     if (!block.isConnected) return;
   }
+  // Variable chips and footnote references are atoms: nothing typed or pasted may end up inside them.
+  for (const chip of Array.from(block.querySelectorAll<HTMLElement>(INLINE_ATOM_SELECTOR))) {
+    if (chip.firstChild) chip.replaceChildren();
+    if (chip.getAttribute('contenteditable') !== 'false') chip.setAttribute('contenteditable', 'false');
+    const className = chip.tagName === 'SUP' ? 'doc-footnote' : 'doc-variable';
+    if (!chip.classList.contains(className)) chip.classList.add(className);
+  }
   removeEmptyMarks(block);
   mergeAdjacentMarks(block);
   syncTrailingBreak(block);
@@ -676,9 +730,14 @@ export const sanitizeHtml = (html: string): DocumentFragment => {
 
 /**
  * Removes editor-only markup (pagination gaps, cell selection). With `forExport` it also drops caret placeholders
- * and editing attributes, which history snapshots keep so the restored DOM is immediately editable.
+ * and editing attributes, which history snapshots keep so the restored DOM is immediately editable, and numbers the
+ * footnote references from `firstFootnote` (a sheet of a longer document continues the numbering).
  */
-export const cleanEditorArtifacts = (scope: Element | DocumentFragment, forExport: boolean): void => {
+export const cleanEditorArtifacts = (
+  scope: Element | DocumentFragment,
+  forExport: boolean,
+  firstFootnote = 1
+): void => {
   for (const element of Array.from(scope.querySelectorAll<HTMLElement>(`[${GAP_ATTRIBUTE}]`))) {
     // The paragraph's own space before it survives; only the gap pagination added is taken back.
     const own = element.getAttribute(SPACE_BEFORE_ATTRIBUTE);
@@ -692,10 +751,22 @@ export const cleanEditorArtifacts = (scope: Element | DocumentFragment, forExpor
     if (!element.classList.length) element.removeAttribute('class');
   }
   if (!forExport) return;
+  // The editor marks resolved and active comments with classes; saved HTML keeps only the anchor.
+  for (const anchor of Array.from(scope.querySelectorAll(COMMENT_SELECTOR))) anchor.removeAttribute('class');
   for (const br of Array.from(scope.querySelectorAll(`br[${TRAILING_BREAK}]`))) br.remove();
   for (const label of Array.from(scope.querySelectorAll('label[contenteditable]'))) {
     label.removeAttribute('contenteditable');
   }
+  // Outside the editor a variable is plain `{{name}}` text, so servers can fill it with a simple replacement.
+  for (const chip of Array.from(scope.querySelectorAll<HTMLElement>(VARIABLE_SELECTOR))) {
+    for (const name of ['contenteditable', 'class', VARIABLE_LABEL_ATTRIBUTE]) chip.removeAttribute(name);
+    chip.textContent = `{{${chip.getAttribute(VARIABLE_ATTRIBUTE)}}}`;
+  }
+  // A footnote reference carries its number, so the saved document reads correctly without the editor.
+  Array.from(scope.querySelectorAll<HTMLElement>(FOOTNOTE_SELECTOR)).forEach((reference, index) => {
+    for (const name of ['contenteditable', 'class']) reference.removeAttribute(name);
+    reference.textContent = String(firstFootnote + index);
+  });
 };
 
 /** Clean HTML of the editor content, as stored in the model and exported. */
@@ -713,6 +784,6 @@ export const isEmptyDocument = (root: HTMLElement): boolean => {
     only?.tagName === 'P' &&
     !only.hasAttribute('style') &&
     (only.textContent ?? '') === '' &&
-    only.querySelector(`img, br:not([${TRAILING_BREAK}])`) === null
+    only.querySelector(`img, ${INLINE_ATOM_SELECTOR}, br:not([${TRAILING_BREAK}])`) === null
   );
 };

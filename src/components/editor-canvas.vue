@@ -5,18 +5,21 @@ import type { ParagraphIndents } from '../core/engine/blocks';
 import { rangeFromPoint } from '../core/engine/clipboard';
 import type { DocumentEngine } from '../core/engine/engine';
 import { selectRange } from '../core/engine/selection';
+import { type SheetFootnote, footnotesHtml } from '../core/footnotes';
 import { useEditorLabels } from '../core/labels';
 import {
   type DocumentViewMode,
   type PageHeaderFooter,
   type PageMargins,
   type PageMetrics,
-  type PageWatermark,
+  type PageSettings,
   WATERMARK_ANGLE,
   ZOOM_STEP,
   hasHeaderFooterText,
   hasWatermarkText,
+  pageNumberOf,
   renderHeaderFooter,
+  showsRunningTexts,
   watermarkFontSize
 } from '../core/page';
 import EditorObjectOverlay from './editor-object-overlay.vue';
@@ -39,10 +42,10 @@ interface Props {
   documentTitle: string;
   /** Engine working on the editable element; `null` until the parent has created it. */
   engine: DocumentEngine | null;
-  /** Text repeated in the bottom margin of every sheet. */
-  footer?: PageHeaderFooter;
-  /** Text repeated in the top margin of every sheet. */
-  header?: PageHeaderFooter;
+  /** Footnotes of every sheet, drawn at its bottom; the web view shows all of them after the document. */
+  footnotes: SheetFootnote[][];
+  /** Page setup: running texts, watermark and page numbering of every sheet. */
+  page: PageSettings;
   /** Indents of the paragraph at the caret, shown by the ruler. */
   indents: ParagraphIndents;
   /** Page size and margins in pixels. */
@@ -53,8 +56,6 @@ interface Props {
   rulerVisible: boolean;
   /** Paginated sheets or a single web sheet. */
   viewMode: DocumentViewMode;
-  /** Watermark drawn behind the text of every sheet. */
-  watermark?: PageWatermark;
   /** Zoom in percent. */
   zoom: number;
 }
@@ -101,23 +102,32 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(val
 const RUNNING_PARTS = ['left', 'center', 'right'] as const;
 
 /** Whether the document has a header, and whether it has a footer. */
-const hasHeader = computed(() => hasHeaderFooterText(props.header));
-const hasFooter = computed(() => hasHeaderFooterText(props.footer));
+const hasHeader = computed(() => hasHeaderFooterText(props.page.header));
+const hasFooter = computed(() => hasHeaderFooterText(props.page.footer));
 
-/** One part of a header or footer with its tokens replaced for the given page. */
+/** One part of a header or footer with its tokens replaced for the given sheet. */
 const runningText = (
   value: PageHeaderFooter | undefined,
   part: (typeof RUNNING_PARTS)[number],
-  page: number
+  sheet: number
 ): string =>
-  value ? renderHeaderFooter(value[part], { page, pages: props.pageCount, title: props.documentTitle }) : '';
+  value
+    ? renderHeaderFooter(value[part], {
+        page: pageNumberOf(props.page, sheet),
+        pages: props.pageCount,
+        title: props.documentTitle
+      })
+    : '';
 
 /** Text of the watermark, empty when the document has none. */
-const watermarkText = computed(() => (hasWatermarkText(props.watermark) ? (props.watermark?.text.trim() ?? '') : ''));
+const watermarkText = computed(() =>
+  hasWatermarkText(props.page.watermark) ? (props.page.watermark?.text.trim() ?? '') : ''
+);
 
 /** Colour, size and angle of the watermark; it is sized to span the paper. */
 const watermarkStyle = computed(() => {
-  const { metrics, watermark } = props;
+  const { metrics } = props;
+  const { watermark } = props.page;
   const diagonal = watermark?.diagonal ?? true;
   return {
     color: watermark?.color,
@@ -286,16 +296,29 @@ defineExpose({
             :style="{ top: px((index - 1) * period) }"
           >
             <div v-if="watermarkText" class="doc-canvas__watermark" :style="watermarkStyle">{{ watermarkText }}</div>
-            <div v-if="hasHeader" class="doc-canvas__running doc-canvas__running--header">
-              <span v-for="part in RUNNING_PARTS" :key="part">{{ runningText(header, part, index) }}</span>
-            </div>
-            <div v-if="hasFooter" class="doc-canvas__running doc-canvas__running--footer">
-              <span v-for="part in RUNNING_PARTS" :key="part">{{ runningText(footer, part, index) }}</span>
-            </div>
-            <span v-else class="doc-canvas__page-number">{{ index }}</span>
+            <!-- Note texts are escaped by footnotesHtml. -->
+            <div
+              v-if="footnotes[index - 1]?.length"
+              class="doc-canvas__footnotes"
+              v-html="footnotesHtml(footnotes[index - 1] ?? [])"
+            />
+            <template v-if="showsRunningTexts(page, index)">
+              <div v-if="hasHeader" class="doc-canvas__running doc-canvas__running--header">
+                <span v-for="part in RUNNING_PARTS" :key="part">{{ runningText(page.header, part, index) }}</span>
+              </div>
+              <div v-if="hasFooter" class="doc-canvas__running doc-canvas__running--footer">
+                <span v-for="part in RUNNING_PARTS" :key="part">{{ runningText(page.footer, part, index) }}</span>
+              </div>
+              <span v-else class="doc-canvas__page-number">{{ pageNumberOf(page, index) }}</span>
+            </template>
           </div>
         </div>
         <div ref="contentRef" class="doc-canvas__content" />
+        <div
+          v-if="viewMode === 'web' && footnotes[0]?.length"
+          class="doc-canvas__web-footnotes"
+          v-html="footnotesHtml(footnotes[0] ?? [])"
+        />
         <EditorObjectOverlay v-if="engine" :engine="engine" :zoom="zoom" />
       </div>
     </div>
@@ -413,6 +436,22 @@ defineExpose({
   opacity: 16%;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+/* Notes of the footnotes, right above the bottom margin of their sheet; pagination keeps the space free. */
+.doc-canvas__footnotes {
+  position: absolute;
+  right: var(--margin-right);
+  bottom: var(--margin-bottom);
+  left: var(--margin-left);
+}
+
+.doc-canvas.is-web .doc-canvas__web-footnotes {
+  padding: 0 56px 32px;
+}
+
+.doc-canvas.is-auto.is-web .doc-canvas__web-footnotes {
+  padding: 0 20px 16px;
 }
 
 /* Header and footer, drawn in the page margins of every sheet. */

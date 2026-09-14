@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import DocumentEditor from './components/document-editor.vue';
 import type { EditorLocaleInput } from './core/labels';
+import type { TemplateVariable } from './core/templates';
 import type { DocumentImageUploadHandler } from './core/types';
 
 /**
@@ -30,6 +31,8 @@ interface Props {
   placeholder?: string;
   /** Uploads an image and resolves with its URL; without it images are embedded as data URLs. */
   uploadImage?: DocumentImageUploadHandler;
+  /** Template variables the user can insert; typing `{{name}}` of one of them inserts it as well. */
+  variables?: readonly TemplateVariable[];
 }
 
 interface Emits {
@@ -51,7 +54,8 @@ withDefaults(defineProps<Props>(), {
   maxLength: 0,
   minHeight: 240,
   placeholder: '',
-  uploadImage: undefined
+  uploadImage: undefined,
+  variables: () => []
 });
 
 const emit = defineEmits<Emits>();
@@ -75,6 +79,7 @@ const model = defineModel<string>({ default: '' });
     :min-height="minHeight"
     :placeholder="placeholder"
     :upload-image="uploadImage"
+    :variables="variables"
     @blur="emit('blur')"
     @focus="emit('focus')"
     @upload-error="emit('uploadError', $event)"

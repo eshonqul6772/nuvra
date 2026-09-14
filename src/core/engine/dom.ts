@@ -11,10 +11,25 @@ const TEXT_BLOCK_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'PRE']
 const LIST_TAGS = new Set(['UL', 'OL']);
 
 /** Tags of inline formatting elements (marks). */
-const MARK_TAGS = new Set(['STRONG', 'EM', 'U', 'S', 'CODE', 'SUB', 'SUP', 'A', 'MARK', 'SPAN']);
+const MARK_TAGS = new Set(['STRONG', 'EM', 'U', 'S', 'CODE', 'SUB', 'SUP', 'A', 'MARK', 'SPAN', 'INS', 'DEL']);
 
-/** Selector matching every mark element, used to scan a subtree for formatting. */
-const MARK_SELECTOR = 'strong, em, u, s, code, sub, sup, a, mark, span';
+/** Attribute naming the template variable of a variable chip. */
+export const VARIABLE_ATTRIBUTE = 'data-variable';
+
+/** Selector for template variable chips: inline atoms that hold no text in the editor. */
+export const VARIABLE_SELECTOR = `span[${VARIABLE_ATTRIBUTE}]`;
+
+/** Attribute holding the text of a footnote on its reference mark. */
+export const FOOTNOTE_ATTRIBUTE = 'data-footnote';
+
+/** Selector for footnote references: inline atoms numbered by the editor, their note text in the attribute. */
+export const FOOTNOTE_SELECTOR = `sup[${FOOTNOTE_ATTRIBUTE}]`;
+
+/** Selector for every inline atom: elements inside a line that behave as one character and hold no editable text. */
+export const INLINE_ATOM_SELECTOR = `${VARIABLE_SELECTOR}, ${FOOTNOTE_SELECTOR}`;
+
+/** Selector matching every mark element, used to scan a subtree for formatting; inline atoms are not marks. */
+const MARK_SELECTOR = `strong, em, u, s, code, sub, sup:not([${FOOTNOTE_ATTRIBUTE}]), a, mark, ins, del, span:not([${VARIABLE_ATTRIBUTE}])`;
 
 /** Selector for blocks without editable text inside: rules, images and page breaks. */
 export const ATOM_SELECTOR = 'hr, img, div[data-type="page-break"]';
@@ -25,8 +40,8 @@ export const TEXT_BLOCK_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, pre';
 /** Marks the extra `<br>` that keeps an empty or break-terminated line visible; it is never serialised. */
 export const TRAILING_BREAK = 'data-doc-trailing';
 
-/** Inline content a user can see besides text: images and real (non-placeholder) line breaks. */
-const VISIBLE_INLINE_SELECTOR = `img, br:not([${TRAILING_BREAK}])`;
+/** Inline content a user can see besides text: images, inline atoms and real (non-placeholder) line breaks. */
+const VISIBLE_INLINE_SELECTOR = `img, ${INLINE_ATOM_SELECTOR}, br:not([${TRAILING_BREAK}])`;
 
 /** Whether the node is an element. */
 export const isElement = (node: Node | null | undefined): node is HTMLElement => node?.nodeType === Node.ELEMENT_NODE;
@@ -42,8 +57,21 @@ export const isTextBlock = (node: Node | null | undefined): node is HTMLElement 
 export const isList = (node: Node | null | undefined): node is HTMLElement =>
   isElement(node) && LIST_TAGS.has(node.tagName);
 
+/** Whether the node is a template variable chip. */
+export const isVariable = (node: Node | null | undefined): node is HTMLElement =>
+  isElement(node) && node.tagName === 'SPAN' && node.hasAttribute(VARIABLE_ATTRIBUTE);
+
+/** Whether the node is a footnote reference. */
+export const isFootnote = (node: Node | null | undefined): node is HTMLElement =>
+  isElement(node) && node.tagName === 'SUP' && node.hasAttribute(FOOTNOTE_ATTRIBUTE);
+
+/** Whether the node is an inline atom: a variable chip or a footnote reference. */
+export const isInlineAtom = (node: Node | null | undefined): node is HTMLElement =>
+  isVariable(node) || isFootnote(node);
+
 /** Whether the node is an inline formatting element. */
-const isMark = (node: Node | null | undefined): node is HTMLElement => isElement(node) && MARK_TAGS.has(node.tagName);
+const isMark = (node: Node | null | undefined): node is HTMLElement =>
+  isElement(node) && MARK_TAGS.has(node.tagName) && !isInlineAtom(node);
 
 /** Whether the node is a block without editable text (rule, image, page break). */
 export const isAtom = (node: Node | null | undefined): node is HTMLElement =>
@@ -97,6 +125,27 @@ export const createElement = <K extends keyof HTMLElementTagNameMap>(
   return element;
 };
 
+/**
+ * Creates the chip of a template variable. It holds no text, so formatting and caret positions treat it as one
+ * character; its label is drawn by CSS from `data-label`, and serialising writes `{{name}}` into it.
+ */
+export const createVariable = (name: string): HTMLSpanElement =>
+  createElement('span', { [VARIABLE_ATTRIBUTE]: name, contenteditable: 'false', class: 'doc-variable' });
+
+/** Longest footnote text kept, in characters. */
+export const MAX_FOOTNOTE_LENGTH = 2000;
+
+/**
+ * Creates a footnote reference. Like a variable chip it holds no text in the editor: CSS draws its number, and
+ * serialising writes the number into it so saved HTML reads correctly anywhere.
+ */
+export const createFootnote = (text: string): HTMLElement =>
+  createElement('sup', {
+    [FOOTNOTE_ATTRIBUTE]: text.slice(0, MAX_FOOTNOTE_LENGTH),
+    contenteditable: 'false',
+    class: 'doc-footnote'
+  });
+
 /** Creates the placeholder `<br>` that gives empty lines their height. */
 export const createTrailingBreak = (): HTMLBRElement => createElement('br', { [TRAILING_BREAK]: '' });
 
@@ -111,9 +160,11 @@ export const createParagraph = (children: Node[] = []): HTMLParagraphElement => 
 export const hasVisibleContent = (element: Element): boolean =>
   (element.textContent ?? '') !== '' || element.querySelector(VISIBLE_INLINE_SELECTOR) !== null;
 
-/** Whether a text block has no text and no image, holding at most one break. */
+/** Whether a text block has no text, image or inline atom, holding at most one break. */
 export const isEmptyTextBlock = (block: Element): boolean =>
-  (block.textContent ?? '') === '' && block.querySelector('img') === null && block.querySelectorAll('br').length <= 1;
+  (block.textContent ?? '') === '' &&
+  block.querySelector(`img, ${INLINE_ATOM_SELECTOR}`) === null &&
+  block.querySelectorAll('br').length <= 1;
 
 /** The last child (or the last one before `before`) that is not an empty text node. */
 const lastMeaningfulChild = (element: Node, before?: Node | null): Node | null => {
@@ -220,8 +271,8 @@ const rangeBetween = (block: HTMLElement, container: Node, offset: number, toEnd
   return range;
 };
 
-/** Whether a range covers no text, image or real line break. */
-const isVisuallyEmpty = (range: Range): boolean =>
+/** Whether a range covers no text, image, variable or real line break. */
+export const isVisuallyEmpty = (range: Range): boolean =>
   range.toString() === '' && range.cloneContents().querySelector(VISIBLE_INLINE_SELECTOR) === null;
 
 /** Whether nothing visible precedes the point inside its block. */

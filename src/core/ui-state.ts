@@ -1,7 +1,9 @@
 import { type TextAlign, type TextDirection, paragraphIndents, paragraphSpacing } from './engine/blocks';
-import { closestTag, closestTextBlock } from './engine/dom';
+import { closestTag, closestTextBlock, closestWithin } from './engine/dom';
 import { activeListKind } from './engine/lists';
 import {
+  COMMENT_ATTRIBUTE,
+  COMMENT_SELECTOR,
   type MarkName,
   type PendingFormat,
   isMarkActive,
@@ -10,6 +12,7 @@ import {
   readStyle,
   selectedTextNodes
 } from './engine/marks';
+import { TABLE_OF_CONTENTS_SELECTOR } from './outline';
 
 /**
  * Flat snapshot of everything the toolbar renders. Components receive this instead of the engine so they
@@ -64,6 +67,8 @@ export interface EditorUiState {
   orderedList: boolean;
   /** Whether the selection is in a task list. */
   taskList: boolean;
+  /** Whether the numbered list at the selection uses legal (1.1, 1.2) numbering. */
+  legalNumbering: boolean;
   /** Whether the selection is inside a quote. */
   blockquote: boolean;
   /** Whether the selection is inside a code block. */
@@ -74,6 +79,12 @@ export interface EditorUiState {
   canRedo: boolean;
   /** Whether the format painter carries a copied format and waits for the text to paint. */
   formatPainter: boolean;
+  /** Whether the document has a table of contents, which the insert menu then offers to update. */
+  tableOfContents: boolean;
+  /** Whether text is selected, which comments can be added to. */
+  textSelected: boolean;
+  /** Id of the innermost comment at the selection, or an empty string. */
+  comment: string;
 }
 
 /** Everything {@link readUiState} needs to know about the editor. */
@@ -116,11 +127,15 @@ export const EMPTY_UI_STATE: EditorUiState = {
   bulletList: false,
   orderedList: false,
   taskList: false,
+  legalNumbering: false,
   blockquote: false,
   codeBlock: false,
   canUndo: false,
   canRedo: false,
-  formatPainter: false
+  formatPainter: false,
+  tableOfContents: false,
+  textSelected: false,
+  comment: ''
 };
 
 /** Marks reported to the toolbar. */
@@ -150,7 +165,8 @@ const readDirection = (block: HTMLElement | null): TextDirection => {
  * block properties come from its first text. At a collapsed caret pending formatting overrides the document.
  */
 export const readUiState = ({ root, range, pending, canUndo, canRedo }: UiStateSource): EditorUiState => {
-  if (!range) return { ...EMPTY_UI_STATE, canUndo, canRedo };
+  const tableOfContents = root.querySelector(TABLE_OF_CONTENTS_SELECTOR) !== null;
+  if (!range) return { ...EMPTY_UI_STATE, canUndo, canRedo, tableOfContents };
   const anchor = range.collapsed ? range.startContainer : (selectedTextNodes(root, range)[0] ?? range.startContainer);
   const block = closestTextBlock(anchor, root);
   const marks = Object.fromEntries(MARKS.map(mark => [mark, isMarkActive(root, range, mark)])) as Record<
@@ -193,11 +209,21 @@ export const readUiState = ({ root, range, pending, canUndo, canRedo }: UiStateS
     bulletList: listKind === 'bulletList',
     orderedList: listKind === 'orderedList',
     taskList: listKind === 'taskList',
+    legalNumbering:
+      closestWithin(
+        anchor,
+        root,
+        element => element.tagName === 'OL' && element.getAttribute('data-numbering') === 'legal'
+      ) !== null,
     blockquote: closestTag(anchor, root, 'BLOCKQUOTE') !== null,
     codeBlock: block?.tagName === 'PRE',
     canUndo,
     canRedo,
-    formatPainter: false
+    formatPainter: false,
+    tableOfContents,
+    textSelected: !range.collapsed && range.toString().trim() !== '',
+    comment:
+      closestWithin(anchor, root, element => element.matches(COMMENT_SELECTOR))?.getAttribute(COMMENT_ATTRIBUTE) ?? ''
   };
 };
 

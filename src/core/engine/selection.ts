@@ -1,4 +1,13 @@
-import { TRAILING_BREAK, closestTextBlock, isAtom, isBreak, isElement, isText, isTrailingBreak } from './dom';
+import {
+  TRAILING_BREAK,
+  closestTextBlock,
+  isAtom,
+  isBreak,
+  isElement,
+  isInlineAtom,
+  isText,
+  isTrailingBreak
+} from './dom';
 
 /**
  * Selection positions expressed as character offsets through the document. Unlike DOM ranges they stay valid when
@@ -17,7 +26,7 @@ interface Leaf {
   node: Node;
   /** Offset of the leaf's first position. */
   start: number;
-  /** Number of positions the leaf occupies: text length, 1 for breaks and atoms, 0 for placeholders. */
+  /** Number of positions the leaf occupies: text length, 1 for breaks, atoms and inline atoms, 0 for placeholders. */
   size: number;
   /** Text block containing the leaf, used to insert one position between blocks. */
   block: HTMLElement | null;
@@ -38,7 +47,7 @@ export const indexOf = (node: Node): number => Array.prototype.indexOf.call(node
 const leafSize = (node: Node, root: HTMLElement): number | null => {
   if (isText(node)) return closestTextBlock(node, root) ? node.data.length : null;
   if (isBreak(node)) return node.hasAttribute(TRAILING_BREAK) ? 0 : 1;
-  return isAtom(node) ? 1 : null;
+  return isAtom(node) || isInlineAtom(node) ? 1 : null;
 };
 
 /** Lists every caret-bearing node with its offset; entering a new text block adds one position, like a line break. */

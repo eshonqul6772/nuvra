@@ -1,7 +1,8 @@
 # nuvra
 
 Word-style document editor for Vue 3. A real page view with paper sizes and margins, a lighter web view for
-forms, tables, images, lists, find & replace, HTML source mode, printing and export to HTML or Word (`.doc`).
+forms, tables, images, lists, find & replace, comments, HTML source mode, printing, export to HTML and Word files
+(`.docx`) you can open again.
 
 **[Documentation and live demo →](https://nuvra-docs.vercel.app)**
 
@@ -17,6 +18,11 @@ forms, tables, images, lists, find & replace, HTML source mode, printing and exp
   the editor shows them, and the Word export uses Word's own header, footer and page fields.
 - A ruler above the page for the margins and for the first line, left and right indents of a paragraph.
 - A page watermark such as DRAFT or COPY, drawn behind the text of every page and carried into print, HTML and Word.
+- Real `.docx` export and import, multilevel (1.1.1) numbering, a table of contents and a navigation pane.
+- Footnotes at the bottom of their page, carried into print and Word.
+- Comments with replies, tracked changes that round-trip with Word, a comparison of two versions, and templates
+  filled in as a form.
+- A `/` command menu and a toolbar slot for your own commands and buttons.
 
 ## Installation
 
@@ -91,7 +97,10 @@ const uploadImage: DocumentImageUploadHandler = async file => {
 | Prop              | Type                              | Default  | Description                                                                |
 | ----------------- | --------------------------------- | -------- | -------------------------------------------------------------------------- |
 | `v-model`         | `string`                          | `''`     | Document HTML; an empty document is an empty string.                       |
-| `v-model:page`    | `PageSettings`                    | A4       | Paper size, orientation and margins.                                       |
+| `v-model:page`    | `PageSettings`                    | A4       | Paper size, orientation, margins, headers, footers, watermark, numbering.  |
+| `v-model:comments`| `DocumentComment[]`               | —        | Comments; binding it turns the comment tools on.                           |
+| `v-model:trackChanges` | `boolean`                    | `false`  | Records edits as tracked changes.                                          |
+| `author`          | `string`                          | `''`     | Name written on new comments, replies and tracked changes.                 |
 | `autofocus`       | `boolean`                         | `false`  | Places the caret at the end of the document once ready.                    |
 | `canvasPadding`   | `number \| string`                | `50`     | Gray space around the page or web sheet.                                   |
 | `defaultViewMode` | `'page' \| 'web'`                 | `'page'` | View shown first.                                                          |
@@ -103,10 +112,14 @@ const uploadImage: DocumentImageUploadHandler = async file => {
 | `maxImageSizeMb`  | `number`                          | `10`     | Largest accepted image file.                                               |
 | `maxLength`       | `number`                          | `0`      | Character limit; `0` means unlimited.                                      |
 | `placeholder`     | `string`                          | `''`     | Text shown while the document is empty.                                    |
+| `ruler`           | `boolean`                         | `true`   | Shows the ruler in the page view.                                          |
+| `slashCommands`   | `SlashCommand[]`                  | `[]`     | Your own commands, listed first in the `/` menu.                           |
 | `title`           | `string`                          | `''`     | Print title and exported file name.                                        |
 | `uploadImage`     | `(file: File) => Promise<string>` | —        | Uploads an image and resolves with its URL.                                |
+| `variables`       | `TemplateVariable[]`              | `[]`     | Template variables the user can insert.                                    |
 
-`Editor` accepts the same props except `v-model:page`, `defaultViewMode`, `height` and `title`.
+`Editor` accepts the same props except `v-model:page`, `v-model:comments`, `v-model:trackChanges`, `author`,
+`defaultViewMode`, `height`, `ruler`, `slashCommands` and `title`.
 
 Numbers are pixels; strings are used as CSS lengths (`'100%'`, `'50vh'`).
 
@@ -117,29 +130,182 @@ Numbers are pixels; strings are used as CSS lengths (`'100%'`, `'50vh'`).
 | `focus`       | —                | The document received focus.                      |
 | `blur`        | —                | The document lost focus; the model is up to date. |
 | `uploadError` | `error: unknown` | An image was rejected or its upload failed.       |
+| `importError` | `error: unknown` | A Word file could not be read.                    |
 
 ### Exposed methods (`DocumentEditor` ref)
 
-| Method         | Description                                                      |
-| -------------- | ---------------------------------------------------------------- |
-| `focus()`      | Moves keyboard focus into the document.                          |
-| `getHTML()`    | Returns the document HTML, including edits not yet in the model. |
-| `print()`      | Opens the browser print dialog.                                  |
-| `exportHtml()` | Downloads the document as an HTML page.                          |
-| `exportWord()` | Downloads the document as a Word-compatible `.doc` file.         |
-| `engine`       | The editing engine, for advanced integrations.                   |
+| Method                    | Description                                                      |
+| ------------------------- | ---------------------------------------------------------------- |
+| `focus()`                 | Moves keyboard focus into the document.                          |
+| `getHTML()`               | Returns the document HTML, including edits not yet in the model. |
+| `insertVariable(name)`    | Inserts a template variable at the selection.                    |
+| `updateTableOfContents()` | Inserts or refreshes the table of contents.                      |
+| `importWord(file)`        | Replaces the document with the content of a `.docx` file.        |
+| `print()`                 | Opens the browser print dialog.                                  |
+| `exportHtml()`            | Downloads the document as an HTML page.                          |
+| `exportWord()`            | Downloads the document as a Word file (`.docx`).                 |
+| `engine`                  | The editing engine (`DocumentEngine`), for advanced integrations. |
 
 ### Keyboard shortcuts
 
 `Ctrl/⌘+B`, `I`, `U` — bold, italic, underline · `Ctrl/⌘+Shift+H` — highlight · `Ctrl/⌘+Z`, `Ctrl/⌘+Shift+Z` — undo,
-redo · `Ctrl/⌘+F` — find · `Ctrl/⌘+H` — replace · `Ctrl/⌘+K` — link · `Ctrl/⌘+P` — print.
+redo · `Ctrl/⌘+F` — find · `Ctrl/⌘+H` — replace · `Ctrl/⌘+K` — link · `Ctrl/⌘+Alt+M` — comment · `Ctrl/⌘+P` — print.
 
 The full list, with Markdown-like input rules, is in the
 [keyboard shortcuts guide](https://nuvra-docs.vercel.app/docs/keyboard-shortcuts).
 
+## Templates and signatures
+
+Pass `variables` to let users insert template variables with the toolbar's **{ }** menu or by typing `{{name}}`.
+They are saved as `<span data-variable="name">{{name}}</span>`; `fillTemplate` replaces them with escaped values,
+in the browser or on a Node server:
+
+```ts
+import { type TemplateVariable, fillTemplate } from 'nuvra';
+
+const variables: TemplateVariable[] = [
+  { name: 'full_name', label: 'Full name' },
+  { name: 'letter_date', label: 'Letter date' }
+];
+
+const letter = fillTemplate(template, { full_name: 'Aziz Karimov', letter_date: '14.09.2026' });
+```
+
+The pen button inserts a signature block in the editor's language: a signature line, an “Approved” or “Agreed”
+block, or the signatures of both parties of a contract. It is a borderless table, so it prints and exports to Word
+without lines.
+
+The document button inserts ready-made templates (official letter, order, application, certificate, act), and the
+toolbar writes amounts in words (`15 000 000 (o‘n besh million)`), inserts long dates (`2026-yil 14-sentabr`) and
+converts Uzbek text between the Latin and Cyrillic alphabets. The same helpers are exported: `getDocumentTemplate`,
+`numberToWords`, `formatAmountInWords`, `parseAmount`, `formatLongDate` and `transliterate`.
+
+### Filling a template as a form
+
+`DocumentForm` shows a saved template as it will be printed, with an input in place of every variable. Fields of the
+same variable share one value:
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue';
+import { DocumentForm } from 'nuvra';
+
+const values = ref<Record<string, string>>({});
+const form = ref<InstanceType<typeof DocumentForm>>();
+
+const submit = () => {
+  if (form.value?.validate().length) return; // empty fields are marked and focused
+  const html = form.value?.getHTML(); // filled with fillTemplate
+};
+</script>
+
+<template>
+  <DocumentForm ref="form" v-model="values" :template="template" :variables="variables" />
+</template>
+```
+
+## Word files and long documents
+
+"Download as Word (.docx)" in the "More" menu writes a real Office Open XML file with the page setup, headers and
+footers with page fields, the watermark, lists, tables with merged cells, images, footnotes and tracked changes as
+Word revisions. "Open Word file (.docx)" (or `importWord(file)`) loads one into the editor, footnotes and revisions
+included; a file that cannot be read emits `importError`. `buildDocx` and `readDocx` do the same in your own code. A
+document with several sections gets the page setup of its last section, and the content of a different first page
+header is not imported.
+
+### Footnotes
+
+"Footnote" in the insert menu or the `/` menu adds a numbered reference and opens a small form for the note; clicking
+a reference edits or deletes it. A footnote is saved in the reference, `<sup data-footnote="note text">1</sup>`, and
+renumbered in document order. The page view draws the notes at the bottom of the sheet the reference is on, the web
+view after the document; printing follows the sheets, and the Word export writes Word footnotes. Notes are plain text.
+From code: `engine.insertFootnote(text)`, `setFootnoteText(element, text)`, `removeFootnote(element)`,
+`getFootnotes()`.
+
+For long documents the toolbar offers multilevel numbering (1., 1.1., 1.1.1., saved as `<ol data-numbering="legal">`),
+a table of contents of the headings with page numbers (saved as `<table data-type="toc">`, refreshed with
+`updateTableOfContents()`), and a navigation pane. `PageSettings` has `differentFirstPage` to hide the header, footer
+and page number on the first page, and `firstPageNumber` for the number printed on it.
+
+## Comments, tracked changes and comparison
+
+Bind `v-model:comments` to turn comments on. The HTML keeps only the anchors, `<span data-comment="id">`; the
+comments are plain data you store next to the document:
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue';
+import { DocumentEditor, type DocumentComment } from 'nuvra';
+
+const html = ref('');
+const comments = ref<DocumentComment[]>([]);
+
+const save = () =>
+  fetch('/api/documents/42', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ html: html.value, comments: comments.value })
+  });
+</script>
+
+<template>
+  <DocumentEditor v-model="html" v-model:comments="comments" author="Aziz Karimov" @blur="save" />
+</template>
+```
+
+Users select text and press "Add comment" (`Ctrl/⌘+Alt+M`); the "Comments" panel replies, resolves, reopens and
+deletes them, and flags comments whose text was deleted.
+
+### Tracked changes
+
+Bind `v-model:trackChanges` (or press "Track changes") to record typing, deleting, cut and paste as tracked changes
+by `author`. They are part of the HTML, `<ins data-change="id" data-author="…" data-time="…">` and `<del …>`, shown
+and printed green-underlined and red-struck. The "Changes" panel accepts or rejects them one by one or all at once;
+from code use `engine.getChanges()`, `engine.resolveChanges(accept, id?)` and `engine.selectChange(id)`. Formatting,
+block changes (headings, lists, tables), Enter and joining paragraphs are not tracked. The Word export writes them as
+revisions and the import reads Word revisions back.
+
+```vue
+<DocumentEditor v-model="html" v-model:track-changes="tracking" author="Aziz Karimov" />
+```
+
+`DocumentCompare` shows what changed between two versions: inserted words in green, deleted words struck through in
+red. Unchanged blocks stay as they are, changed paragraphs are compared word by word, and added or removed blocks are
+shown whole. `compareDocuments(before, after)` returns the same HTML and counts for your own view.
+
+```vue
+<DocumentCompare :before="previousVersion" :after="html" :height="600" />
+```
+
+## Commands and toolbar buttons
+
+Typing `/` at the start of a line or after a space opens a command menu: headings, lists, table, page break, footnote,
+table of contents, dates, signature blocks and your variables. `slashCommands` adds your own commands at the top, and the
+`toolbar` slot adds your own buttons:
+
+```vue
+<script setup lang="ts">
+import { DocumentEditor, type SlashCommand } from 'nuvra';
+
+const slashCommands: SlashCommand[] = [
+  { id: 'director', label: 'Director’s name', icon: 'pencil', run: engine => engine.insertText('A. Karimov') }
+];
+</script>
+
+<template>
+  <DocumentEditor v-model="html" :slash-commands="slashCommands">
+    <template #toolbar="{ engine, disabled }">
+      <button type="button" class="doc-tb-button" :disabled="disabled" @mousedown.prevent @click="engine.insertText('✓')">
+        ✓
+      </button>
+    </template>
+  </DocumentEditor>
+</template>
+```
+
 ## Languages
 
-The interface ships in Uzbek (`uz`, the default), English (`en`) and Russian (`ru`). The translations are part of
+The interface ships in Uzbek (`uz`, the default), Uzbek Cyrillic (`uzCyrl`), English (`en`) and Russian (`ru`). The translations are part of
 the package and cannot be changed from outside; an app only picks the language.
 
 For one editor, pass the locale (or just its code) to the `locale` prop:
