@@ -38,7 +38,7 @@ import {
 import { SIGNATURE_PRESETS, buildSignatureBlock } from '../core/signature';
 import type { SlashCommand } from '../core/slash-commands';
 import type { TemplateVariable } from '../core/templates';
-import type { DocumentImageUploadHandler, DocumentMenuAction } from '../core/types';
+import type { DocumentImageUploadHandler, DocumentMenuAction, ToolbarTool } from '../core/types';
 import { EMPTY_UI_STATE, type EditorUiState, isSameUiState } from '../core/ui-state';
 import EditorBubbleMenus from './editor-bubble-menus.vue';
 // biome-ignore lint/style/useImportType: Component is rendered in the template.
@@ -102,6 +102,11 @@ interface Props {
   ruler?: boolean;
   /** Used as the print title and the exported file name. */
   title?: string;
+  /**
+   * Toolbar tools to show, such as `['history', 'marks', 'lists', 'link']`; every tool without a list. Keyboard
+   * shortcuts, the `/` menu and the right-click menu are not affected.
+   */
+  tools?: readonly ToolbarTool[];
   /** Uploads an inserted image and resolves with its URL; without it images are embedded as data URLs. */
   uploadImage?: DocumentImageUploadHandler;
   /** Template variables the user can insert; typing `{{name}}` of one of them inserts it as well. */
@@ -125,6 +130,7 @@ const props = withDefaults(defineProps<Props>(), {
   ruler: true,
   slashCommands: () => [],
   title: '',
+  tools: undefined,
   uploadImage: undefined,
   variables: () => []
 });
@@ -542,7 +548,7 @@ const updateTableOfContents = async () => {
 const commentsEnabled = computed(() => comments.value !== undefined);
 /** Whether the comments panel is open. */
 const commentsVisible = ref(false);
-/** Id of the comment whose text is anchored but whose first message is still being written. */
+/** id of the comment whose text is anchored but whose first message is still being written. */
 const draftCommentId = ref<string | null>(null);
 /** Ids of the comments anchored in the document, in document order. */
 const anchoredCommentIds = shallowRef<string[]>([]);
@@ -619,7 +625,7 @@ const removeComment = (id: string) => {
 
 watch([comments, commentsVisible, () => uiState.value.comment], syncComments, { deep: true });
 
-/** Last selection reported with `selectionChange`, serialised, so moves within the same position are not sent. */
+/** Last selection reported with `selectionChange`, serialized, so moves within the same position are not sent. */
 let reportedSelection = '';
 
 /** Reports where the caret is, for the host to share with other people editing. */
@@ -897,7 +903,7 @@ const onMenu = (action: DocumentMenuAction) => {
       break;
     case 'formattingMarks':
       formattingMarks.value = !formattingMarks.value;
-      // The class lives on the editable root, which is never serialised, so the marks stay out of the document.
+      // The class lives on the editable root, which is never serialized, so the marks stay out of the document.
       engine.value?.root.classList.toggle('doc-show-marks', formattingMarks.value);
       break;
     default:
@@ -1147,6 +1153,7 @@ defineExpose({
         :state="uiState"
         :uploading="uploading"
         :variables="props.variables"
+        :tools="props.tools"
         @find="toggleFind"
         @insert-images="insertImages"
         @menu="onMenu"
@@ -1186,8 +1193,8 @@ defineExpose({
           :readonly="disabled"
         />
         <EditorCollaborators
-          v-if="engine && bodyRef && canvasScroll && collaborators.length && !sourceMode"
-          :collaborators="collaborators"
+          v-if="engine && bodyRef && canvasScroll && props.collaborators.length && !sourceMode"
+          :collaborators="props.collaborators"
           :container="bodyRef"
           :engine="engine"
           :layout-key="collaboratorLayoutKey"

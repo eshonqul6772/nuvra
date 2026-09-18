@@ -48,7 +48,8 @@ export type { FillTemplateOptions, TemplateValues, TemplateVariable } from './co
 export { fillTemplate, getTemplateVariables } from './core/templates';
 export type { TransliterationDirection } from './core/transliterate';
 export { transliterate } from './core/transliterate';
-export type { DocumentImageUploadHandler } from './core/types';
+export type { DocumentImageUploadHandler, ToolbarTool } from './core/types';
+export { TOOLBAR_TOOLS } from './core/types';
 export type { EditorUiState } from './core/ui-state';
 export { default as Editor } from './editor.vue';
 export { default as DocumentForm } from './form.vue';

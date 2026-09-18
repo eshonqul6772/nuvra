@@ -2,7 +2,7 @@
 import DocumentEditor from './components/document-editor.vue';
 import type { EditorLocaleInput } from './core/labels';
 import type { TemplateVariable } from './core/templates';
-import type { DocumentImageUploadHandler } from './core/types';
+import type { DocumentImageUploadHandler, ToolbarTool } from './core/types';
 
 /**
  * Rich text field for forms: a wrapper around the document editor in the web view, growing with its content
@@ -29,6 +29,8 @@ interface Props {
   minHeight?: number | string;
   /** Text shown while the field is empty. */
   placeholder?: string;
+  /** Toolbar tools to show; every tool without a list. */
+  tools?: readonly ToolbarTool[];
   /** Uploads an image and resolves with its URL; without it images are embedded as data URLs. */
   uploadImage?: DocumentImageUploadHandler;
   /** Template variables the user can insert; typing `{{name}}` of one of them inserts it as well. */
@@ -54,6 +56,7 @@ withDefaults(defineProps<Props>(), {
   maxLength: 0,
   minHeight: 240,
   placeholder: '',
+  tools: undefined,
   uploadImage: undefined,
   variables: () => []
 });
@@ -78,6 +81,7 @@ const model = defineModel<string>({ default: '' });
     :max-length="maxLength"
     :min-height="minHeight"
     :placeholder="placeholder"
+    :tools="tools"
     :upload-image="uploadImage"
     :variables="variables"
     @blur="emit('blur')"

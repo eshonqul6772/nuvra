@@ -51,6 +51,15 @@ export const ROTATED_ATTRIBUTE = 'data-doc-rotated';
 /** Attribute pagination writes on blocks it moved to the next sheet; editor-only. */
 export const GAP_ATTRIBUTE = 'data-doc-gap';
 
+/** Attribute pagination writes on table rows it moved down to the next sheet, with the shift in pixels; editor-only. */
+export const ROW_SHIFT_ATTRIBUTE = 'data-doc-row-shift';
+
+/** Attribute pagination writes on tables split over sheets, with the space their moved rows add; editor-only. */
+export const TABLE_SHIFT_ATTRIBUTE = 'data-doc-table-shift';
+
+/** Attribute pagination sets on the editable root while the document is laid out on sheets; editor-only. */
+export const PAGED_ATTRIBUTE = 'data-doc-paged';
+
 /** Class marking table cells in a drag selection; editor-only. */
 export const SELECTED_CELL_CLASS = 'doc-cell-selected';
 
@@ -756,6 +765,16 @@ export const cleanEditorArtifacts = (
   }
   for (const element of Array.from(scope.querySelectorAll(`[${ROTATED_ATTRIBUTE}]`))) {
     element.removeAttribute(ROTATED_ATTRIBUTE);
+  }
+  for (const [attribute, property] of [
+    [ROW_SHIFT_ATTRIBUTE, 'transform'],
+    [TABLE_SHIFT_ATTRIBUTE, 'padding-bottom']
+  ] as const) {
+    for (const element of Array.from(scope.querySelectorAll<HTMLElement>(`[${attribute}]`))) {
+      element.style.removeProperty(property);
+      element.removeAttribute(attribute);
+      if (!element.getAttribute('style')) element.removeAttribute('style');
+    }
   }
   for (const element of Array.from(scope.querySelectorAll(`.${SELECTED_CELL_CLASS}`))) {
     element.classList.remove(SELECTED_CELL_CLASS);

@@ -119,6 +119,7 @@ const uploadImage: DocumentImageUploadHandler = async file => {
 | `ruler`           | `boolean`                         | `true`   | Shows the ruler in the page view.                                          |
 | `slashCommands`   | `SlashCommand[]`                  | `[]`     | Your own commands, listed first in the `/` menu.                           |
 | `title`           | `string`                          | `''`     | Print title and exported file name.                                        |
+| `tools`           | `ToolbarTool[]`                   | all      | Toolbar tools to show; see [Choosing the toolbar tools](#choosing-the-toolbar-tools). |
 | `uploadImage`     | `(file: File) => Promise<string>` | —        | Uploads an image and resolves with its URL.                                |
 | `variables`       | `TemplateVariable[]`              | `[]`     | Template variables the user can insert.                                    |
 
@@ -219,6 +220,9 @@ Word revisions. "Open Word file (.docx)" (or `importWord(file)`) loads one into 
 included; a file that cannot be read emits `importError`. `buildDocx` and `readDocx` do the same in your own code. A
 document with several sections takes the page setup of its first section, and every further section starts with a
 section break; the content of a different first page header is not imported.
+
+Tables longer than a page break between their rows in the page view, in print and in the PDF, as in Word: the rows
+that do not fit continue at the top of the next page, and rows joined by a merged cell stay together.
 
 ### PDF download
 
@@ -358,6 +362,21 @@ const slashCommands: SlashCommand[] = [
   </DocumentEditor>
 </template>
 ```
+
+### Choosing the toolbar tools
+
+The `tools` prop shows only the toolbar tools you list, in their usual order; without it every tool is shown. Groups left
+without a tool disappear together with their dividers, and the `toolbar` slot is always shown. Keyboard shortcuts, the
+`/` menu and the right-click menu are not affected.
+
+```vue
+<DocumentEditor v-model="html" :tools="['history', 'blockStyle', 'marks', 'lists', 'link', 'table']" />
+```
+
+The tools are `history` (undo, redo), `formatPainter`, `blockStyle`, `fontFamily`, `fontSize`, `marks` (bold, italic,
+underline and more), `textCase`, `color`, `highlight`, `align`, `lineHeight`, `direction`, `lists`, `indent`, `link`,
+`image`, `table`, `specialCharacters`, `variables`, `signature`, `insert`, `review`, `search`, `templates`,
+`headerFooter`, `pageSetup` and `more`. `TOOLBAR_TOOLS` lists them all, and `Editor` takes the same prop.
 
 ## Languages
 

@@ -12,7 +12,7 @@ import { formatAmountInWords } from '../core/numbers';
 import { type PageSettings, hasHeaderFooterText } from '../core/page';
 import { SIGNATURE_PRESETS, type SignaturePreset, buildSignatureBlock } from '../core/signature';
 import type { TemplateVariable } from '../core/templates';
-import type { DocumentMenuAction } from '../core/types';
+import { type DocumentMenuAction, TOOLBAR_TOOLS, type ToolbarTool } from '../core/types';
 import { type EditorUiState, normalizeFontFamily } from '../core/ui-state';
 import EditorColorPicker from './editor-color-picker.vue';
 import EditorDropdown from './editor-dropdown.vue';
@@ -64,9 +64,41 @@ interface Props {
   uploading: boolean;
   /** Template variables offered by the variable menu; the menu is hidden without any. */
   variables: ReadonlyArray<TemplateVariable>;
+  /** Tools to show; every tool without a list. */
+  tools: readonly ToolbarTool[] | undefined;
 }
 
 const props = defineProps<Props>();
+
+/** Whether each tool is shown: all of them without a `tools` list, otherwise the listed ones. */
+const has = computed(() => {
+  const listed = props.tools ? new Set<ToolbarTool>(props.tools) : null;
+  return Object.fromEntries(TOOLBAR_TOOLS.map(tool => [tool, !listed || listed.has(tool)])) as Record<
+    ToolbarTool,
+    boolean
+  >;
+});
+
+/** Whether each group left of the spacer has a visible tool; empty groups and their dividers are left out. */
+const groups = computed(() => {
+  const tool = has.value;
+  return [
+    tool.history || tool.formatPainter,
+    tool.blockStyle || tool.fontFamily || tool.fontSize,
+    tool.marks || tool.textCase || tool.color || tool.highlight,
+    tool.align || tool.lineHeight || tool.direction || tool.lists || tool.indent,
+    tool.link ||
+      tool.image ||
+      tool.table ||
+      tool.specialCharacters ||
+      (tool.variables && props.variables.length > 0) ||
+      tool.signature ||
+      tool.insert
+  ];
+});
+
+/** Whether a divider goes in front of a group: the group is shown and so is one before it. */
+const dividerBefore = (index: number) => Boolean(groups.value[index]) && groups.value.slice(0, index).some(Boolean);
 
 interface Emits {
   /** The search button was pressed. */
@@ -521,10 +553,11 @@ defineExpose({
 
 <template>
   <div class="doc-toolbar" role="toolbar" :aria-label="t('editor.toolbar')">
-    <div class="doc-toolbar__group">
+    <div v-if="groups[0]" class="doc-toolbar__group">
       <button
         type="button"
         class="doc-tb-button"
+        v-if="has.history"
         :aria-label="t('editor.undo')"
         :disabled="locked || !state.canUndo"
         :title="withShortcut('editor.undo', 'Mod+Z')"
@@ -536,6 +569,7 @@ defineExpose({
       <button
         type="button"
         class="doc-tb-button"
+        v-if="has.history"
         :aria-label="t('editor.redo')"
         :disabled="locked || !state.canRedo"
         :title="withShortcut('editor.redo', 'Mod+Y')"
@@ -548,6 +582,7 @@ defineExpose({
         type="button"
         class="doc-tb-button"
         :class="{ 'is-active': state.formatPainter }"
+        v-if="has.formatPainter"
         :aria-label="t('editor.formatPainter')"
         :aria-pressed="state.formatPainter"
         :disabled="locked"
@@ -559,10 +594,10 @@ defineExpose({
       </button>
     </div>
 
-    <span class="doc-toolbar__divider" />
+    <span v-if="dividerBefore(1)" class="doc-toolbar__divider" />
 
-    <div class="doc-toolbar__group">
-      <EditorDropdown :disabled="locked" @command="setBlock">
+    <div v-if="groups[1]" class="doc-toolbar__group">
+      <EditorDropdown v-if="has.blockStyle" :disabled="locked" @command="setBlock">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select doc-toolbar__block"
@@ -601,7 +636,7 @@ defineExpose({
         </template>
       </EditorDropdown>
 
-      <EditorDropdown :disabled="locked" :max-height="LONG_MENU_HEIGHT" @command="setFontFamily">
+      <EditorDropdown v-if="has.fontFamily" :disabled="locked" :max-height="LONG_MENU_HEIGHT" @command="setFontFamily">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select doc-toolbar__font"
@@ -628,6 +663,7 @@ defineExpose({
         </template>
       </EditorDropdown>
 
+      <template v-if="has.fontSize">
       <input
         v-model="fontSizeInput"
         class="doc-input doc-toolbar__size"
@@ -691,11 +727,13 @@ defineExpose({
       >
         <EditorIcon name="a-arrow-down" :size="16" />
       </button>
+      </template>
     </div>
 
-    <span class="doc-toolbar__divider" />
+    <span v-if="dividerBefore(2)" class="doc-toolbar__divider" />
 
-    <div class="doc-toolbar__group">
+    <div v-if="groups[2]" class="doc-toolbar__group">
+      <template v-if="has.marks">
       <button
         v-for="button in MARK_BUTTONS"
         :key="button.key"
@@ -750,7 +788,8 @@ defineExpose({
           </EditorDropdownItem>
         </template>
       </EditorDropdown>
-      <EditorDropdown :disabled="locked" @command="setTextCase">
+      </template>
+      <EditorDropdown v-if="has.textCase" :disabled="locked" @command="setTextCase">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -775,12 +814,14 @@ defineExpose({
         </template>
       </EditorDropdown>
       <EditorColorPicker
+        v-if="has.color"
         mode="text"
         :current="state.color"
         :disabled="locked"
         @select="engine.setTextStyle('color', $event)"
       />
       <EditorColorPicker
+        v-if="has.highlight"
         mode="highlight"
         :current="state.highlight"
         :disabled="locked"
@@ -788,10 +829,10 @@ defineExpose({
       />
     </div>
 
-    <span class="doc-toolbar__divider" />
+    <span v-if="dividerBefore(3)" class="doc-toolbar__divider" />
 
-    <div class="doc-toolbar__group">
-      <EditorDropdown :disabled="locked" @command="setAlign">
+    <div v-if="groups[3]" class="doc-toolbar__group">
+      <EditorDropdown v-if="has.align" :disabled="locked" @command="setAlign">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -817,7 +858,7 @@ defineExpose({
         </template>
       </EditorDropdown>
 
-      <EditorDropdown :disabled="locked" @command="setLineHeight">
+      <EditorDropdown v-if="has.lineHeight" :disabled="locked" @command="setLineHeight">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -850,7 +891,7 @@ defineExpose({
         </template>
       </EditorDropdown>
 
-      <EditorDropdown :disabled="locked" @command="setDirection">
+      <EditorDropdown v-if="has.direction" :disabled="locked" @command="setDirection">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -875,6 +916,7 @@ defineExpose({
         </template>
       </EditorDropdown>
 
+      <template v-if="has.lists">
       <button
         v-for="button in LIST_BUTTONS"
         :key="button.key"
@@ -910,9 +952,11 @@ defineExpose({
           </EditorDropdownItem>
         </template>
       </EditorDropdown>
+      </template>
       <button
         type="button"
         class="doc-tb-button"
+        v-if="has.indent"
         :aria-label="t('editor.outdent')"
         :disabled="locked"
         :title="withShortcut('editor.outdent', 'Shift+Tab')"
@@ -924,6 +968,7 @@ defineExpose({
       <button
         type="button"
         class="doc-tb-button"
+        v-if="has.indent"
         :aria-label="t('editor.indent')"
         :disabled="locked"
         :title="withShortcut('editor.indent', 'Tab')"
@@ -934,10 +979,11 @@ defineExpose({
       </button>
     </div>
 
-    <span class="doc-toolbar__divider" />
+    <span v-if="dividerBefore(4)" class="doc-toolbar__divider" />
 
-    <div class="doc-toolbar__group">
+    <div v-if="groups[4]" class="doc-toolbar__group">
       <EditorPopover
+        v-if="has.link"
         v-model:open="linkVisible"
         :disabled="locked"
         :width="300"
@@ -979,7 +1025,7 @@ defineExpose({
         </form>
       </EditorPopover>
 
-      <EditorPopover v-model:open="imageVisible" :disabled="locked" :width="300">
+      <EditorPopover v-if="has.image" v-model:open="imageVisible" :disabled="locked" :width="300">
         <template #reference>
           <button
             type="button"
@@ -1014,7 +1060,7 @@ defineExpose({
       </EditorPopover>
       <input ref="fileInput" type="file" accept="image/*" hidden multiple @change="onFilesPicked" />
 
-      <EditorPopover v-model:open="tableVisible" :disabled="locked" :width="212">
+      <EditorPopover v-if="has.table" v-model:open="tableVisible" :disabled="locked" :width="212">
         <template #reference>
           <button
             type="button"
@@ -1030,7 +1076,7 @@ defineExpose({
         <EditorTablePicker v-if="tableVisible" @select="insertTable" />
       </EditorPopover>
 
-      <EditorPopover v-model:open="charactersVisible" :disabled="locked" :width="258">
+      <EditorPopover v-if="has.specialCharacters" v-model:open="charactersVisible" :disabled="locked" :width="258">
         <template #reference>
           <button
             type="button"
@@ -1057,7 +1103,7 @@ defineExpose({
         </div>
       </EditorPopover>
 
-      <EditorDropdown v-if="variables.length" :disabled="locked" :max-height="LONG_MENU_HEIGHT" @command="insertVariable">
+      <EditorDropdown v-if="has.variables && variables.length" :disabled="locked" :max-height="LONG_MENU_HEIGHT" @command="insertVariable">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -1077,7 +1123,7 @@ defineExpose({
         </template>
       </EditorDropdown>
 
-      <EditorDropdown :disabled="locked" @command="insertSignature">
+      <EditorDropdown v-if="has.signature" :disabled="locked" @command="insertSignature">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -1096,7 +1142,7 @@ defineExpose({
         </template>
       </EditorDropdown>
 
-      <EditorDropdown :disabled="locked" @command="insertBlock">
+      <EditorDropdown v-if="has.insert" :disabled="locked" @command="insertBlock">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -1155,7 +1201,7 @@ defineExpose({
     <div class="doc-toolbar__group doc-toolbar__group--end">
       <!-- Buttons the host application adds to the toolbar. -->
       <slot />
-      <EditorDropdown placement="bottom-end" @command="onMenuCommand">
+      <EditorDropdown v-if="has.review" placement="bottom-end" @command="onMenuCommand">
         <button
           type="button"
           class="doc-tb-button doc-tb-button--select"
@@ -1193,6 +1239,7 @@ defineExpose({
         type="button"
         class="doc-tb-button"
         :class="{ 'is-active': findOpen }"
+        v-if="has.search"
         :aria-label="t('editor.search.title')"
         :disabled="sourceMode"
         :title="withShortcut('editor.search.title', 'Mod+F')"
@@ -1202,7 +1249,7 @@ defineExpose({
         <EditorIcon name="search" :size="16" />
       </button>
 
-      <EditorDropdown placement="bottom-end" :disabled="locked" @command="insertTemplate">
+      <EditorDropdown v-if="has.templates" placement="bottom-end" :disabled="locked" @command="insertTemplate">
         <button
           type="button"
           class="doc-tb-button"
@@ -1220,7 +1267,7 @@ defineExpose({
         </template>
       </EditorDropdown>
 
-      <EditorPopover placement="bottom-end" :width="340">
+      <EditorPopover v-if="has.headerFooter" placement="bottom-end" :width="340">
         <template #reference>
           <button
             type="button"
@@ -1236,7 +1283,7 @@ defineExpose({
         <EditorHeaderFooter :page="page" @change="emit('update:page', $event)" />
       </EditorPopover>
 
-      <EditorPopover placement="bottom-end" :width="316">
+      <EditorPopover v-if="has.pageSetup" placement="bottom-end" :width="316">
         <template #reference>
           <button
             type="button"
@@ -1251,7 +1298,7 @@ defineExpose({
         <EditorPageSetup :page="page" @change="emit('update:page', $event)" />
       </EditorPopover>
 
-      <EditorDropdown placement="bottom-end" @command="onMenuCommand">
+      <EditorDropdown v-if="has.more" placement="bottom-end" @command="onMenuCommand">
         <button
           type="button"
           class="doc-tb-button"

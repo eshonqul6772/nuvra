@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { cleanEditorArtifacts } from '../src/core/engine/schema';
 import type { SheetFootnote } from '../src/core/footnotes';
 import type { PageMetrics } from '../src/core/page';
 import { createPagination } from '../src/core/pagination';
@@ -64,6 +65,86 @@ const layout = async (html: string) => {
   stage.remove();
   return { pageCount, footnotes, moved };
 };
+
+/** Height of every table row. */
+const ROW_HEIGHT = 400;
+
+/**
+ * Lays out one table at the top margin (its rows stacked from the table's top) and the blocks after it, and returns
+ * the root after one layout pass.
+ */
+const layoutTable = async (html: string) => {
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      if (this.tagName === 'TR') return ROW_HEIGHT;
+      if (this.tagName === 'TABLE') return this.querySelectorAll('tr').length * ROW_HEIGHT;
+      return this.tagName === 'P' ? BLOCK_HEIGHT : 0;
+    }
+  });
+  const stage = document.createElement('div');
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  stage.append(root);
+  document.body.append(stage);
+  let top = METRICS.marginTop;
+  for (const child of Array.from(root.children) as HTMLElement[]) {
+    const childTop = top;
+    Object.defineProperty(child, 'offsetTop', { configurable: true, get: () => childTop });
+    top += child.offsetHeight;
+    Array.from(child.querySelectorAll('tr')).forEach((row, index) => {
+      Object.defineProperty(row, 'offsetTop', { configurable: true, get: () => index * ROW_HEIGHT });
+    });
+  }
+  let pageCount = 1;
+  const pagination = createPagination(root, {
+    onPageCount: count => {
+      pageCount = count;
+    },
+    isComposing: () => false
+  });
+  pagination.setMetrics(METRICS);
+  await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  pagination.destroy();
+  stage.remove();
+  return { root, pageCount, rows: Array.from(root.querySelectorAll('tr')) };
+};
+
+const row = (text: string) => `<tr><td><p>${text}</p></td></tr>`;
+
+describe('pagination of long tables', () => {
+  it('moves the rows that do not fit to the next sheet instead of running over it', async () => {
+    const { root, pageCount, rows } = await layoutTable(
+      `<table><tbody>${row('a')}${row('b')}${row('c')}</tbody></table>`
+    );
+    // Two rows fill the 800px text area; the third starts at the top of the second sheet's text area (1120px).
+    expect(pageCount).toBe(2);
+    expect(rows.map(tr => tr.style.transform)).toEqual(['', '', 'translateY(220px)']);
+    expect(root.querySelector('table')?.style.paddingBottom).toBe('220px');
+    expect(root.hasAttribute('data-doc-paged')).toBe(true);
+  });
+
+  it('keeps rows joined by a cell spanning them on the same sheet', async () => {
+    const { rows } = await layoutTable(
+      `<table><tbody>${row('a')}<tr><td rowspan="2"><p>b</p></td><td><p>b</p></td></tr><tr><td><p>c</p></td></tr></tbody></table>`
+    );
+    // The second and third rows share a cell, so they move together.
+    expect(rows.map(tr => tr.style.transform)).toEqual(['', 'translateY(620px)', 'translateY(620px)']);
+  });
+
+  it('moves the blocks after a split table along with its moved rows', async () => {
+    const { root } = await layoutTable(`<table><tbody>${row('a')}${row('b')}${row('c')}</tbody></table><p>d</p>`);
+    // The paragraph follows the moved row on the second sheet, so no gap of its own is needed.
+    expect(root.querySelector('p:not(td p)')?.hasAttribute('data-doc-gap')).toBe(false);
+  });
+
+  it('leaves no pagination markup in the saved HTML', async () => {
+    const { root } = await layoutTable(`<table><tbody>${row('a')}${row('b')}${row('c')}</tbody></table>`);
+    cleanEditorArtifacts(root, true);
+    expect(root.innerHTML).not.toMatch(/data-doc-|transform|padding-bottom/);
+  });
+});
 
 describe('pagination with footnotes', () => {
   it('fills a sheet when there are no footnotes', async () => {

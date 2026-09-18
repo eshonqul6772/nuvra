@@ -45,7 +45,7 @@ export const textToFragment = (text: string): DocumentFragment => {
   return fragment;
 };
 
-/** Converts a payload into editor blocks, preferring sanitised HTML over plain text; `null` when it has neither. */
+/** Converts a payload into editor blocks, preferring sanitized HTML over plain text; `null` when it has neither. */
 export const transferToFragment = (content: TransferContent): DocumentFragment | null => {
   if (content.html) return sanitizeHtml(content.html);
   return content.text ? textToFragment(content.text) : null;

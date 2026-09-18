@@ -12,22 +12,22 @@ export interface SelectionOffsets {
   focus: number;
 }
 
-/** Someone else editing the same document. */
+/** Someone else edits the same document. */
 export interface Collaborator {
   /** Stable id of the person or connection. */
   id: string;
   /** Name shown next to the caret. */
   name: string;
-  /** CSS colour of the caret and the selection; one is picked from the id when it is left out. */
+  /** CSS color of the caret and the selection; one is picked from the id when it is left out. */
   color?: string;
   /** Where the person's caret or selection is, or `null` while they are not in the document. */
   selection: SelectionOffsets | null;
 }
 
-/** Colours given to collaborators without one, readable on white paper. */
+/** Colors given to collaborators without one, readable on white paper. */
 const COLLABORATOR_COLORS = ['#2563eb', '#db2777', '#059669', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#65a30d'];
 
-/** The colour of a collaborator: their own, or a stable one derived from the id. */
+/** The color of a collaborator: their own, or a stable one derived from the id. */
 export const collaboratorColor = (collaborator: Pick<Collaborator, 'id' | 'color'>): string => {
   if (collaborator.color) return collaborator.color;
   let hash = 0;

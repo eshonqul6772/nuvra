@@ -473,6 +473,22 @@
   position: relative;
 }
 
+/*
+ * Page view: pagination moves the rows of a long table that do not fit on a sheet to the next one. Collapsed borders
+ * are drawn by the table and would stay behind, so every cell draws its own right and bottom border and, with a
+ * shadow, the top and left line it shares with its neighbours; a moved row takes all four along. The look is the
+ * same as the collapsed 1px grid. Separate borders also let the table keep padding below for its moved rows.
+ */
+.doc-canvas .doc-content[data-doc-paged] table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.doc-canvas .doc-content[data-doc-paged] table:not([data-type]) > tbody > tr > :is(td, th) {
+  border-width: 0 1px 1px 0;
+  box-shadow: -1px -1px 0 #8f99a8;
+}
+
 .doc-canvas .doc-content .doc-cell-selected::after {
   position: absolute;
   inset: 0;

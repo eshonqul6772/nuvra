@@ -1,5 +1,13 @@
 import { FOOTNOTE_ATTRIBUTE, FOOTNOTE_SELECTOR } from './engine/dom';
-import { GAP_ATTRIBUTE, ROTATED_ATTRIBUTE, SPACE_BEFORE_ATTRIBUTE, cleanEditorArtifacts } from './engine/schema';
+import {
+  GAP_ATTRIBUTE,
+  PAGED_ATTRIBUTE,
+  ROTATED_ATTRIBUTE,
+  ROW_SHIFT_ATTRIBUTE,
+  SPACE_BEFORE_ATTRIBUTE,
+  TABLE_SHIFT_ATTRIBUTE,
+  cleanEditorArtifacts
+} from './engine/schema';
 import { type SheetFootnote, footnotesHtml } from './footnotes';
 import type { PageMetrics, PageOrientation } from './page';
 
@@ -110,6 +118,80 @@ const writeGap = (element: HTMLElement, gap: number) => {
   if (!element.getAttribute('style')) element.removeAttribute('style');
 };
 
+/** Pixel value pagination stored in an attribute, `0` when absent. */
+const readShift = (element: HTMLElement, attribute: string) =>
+  Number.parseFloat(element.getAttribute(attribute) ?? '') || 0;
+
+/**
+ * Writes a pixel value pagination applies through one style property, together with the attribute that marks it as
+ * editor-only; touches the DOM only on change and removes both when the value is `0`.
+ */
+const writeShift = (
+  element: HTMLElement,
+  attribute: string,
+  property: string,
+  value: number,
+  format: (pixels: number) => string
+) => {
+  const rounded = Math.max(0, Math.round(value));
+  if (rounded === readShift(element, attribute)) return;
+  if (rounded) {
+    element.setAttribute(attribute, String(rounded));
+    element.style.setProperty(property, format(rounded));
+    return;
+  }
+  element.removeAttribute(attribute);
+  element.style.removeProperty(property);
+  if (!element.getAttribute('style')) element.removeAttribute('style');
+};
+
+/** Moves a table row down by `shift` pixels; a transform leaves the table's own layout, and so its measuring, intact. */
+const writeRowShift = (row: HTMLElement, shift: number) =>
+  writeShift(row, ROW_SHIFT_ATTRIBUTE, 'transform', shift, pixels => `translateY(${pixels}px)`);
+
+/** Keeps the space the moved rows of a table need below it, so the blocks after the table move with them. */
+const writeTableShift = (table: HTMLElement, shift: number) =>
+  writeShift(table, TABLE_SHIFT_ATTRIBUTE, 'padding-bottom', shift, pixels => `${pixels}px`);
+
+/** A row of a split table, measured in the table's own coordinates. */
+interface MeasuredRow {
+  element: HTMLElement;
+  top: number;
+  height: number;
+  /** Whether the table may break before this row: no cell of an earlier row spans down into it. */
+  breakable: boolean;
+  /** Height of this row and the rows joined to it by spanning cells, which have to stay on one sheet. */
+  groupHeight: number;
+}
+
+/** Rows of a table's body with where they sit, or `null` for any other block. */
+const measureRows = (element: HTMLElement): MeasuredRow[] | null => {
+  if (element.tagName !== 'TABLE') return null;
+  const rows = Array.from(element.querySelectorAll<HTMLElement>(':scope > tbody > tr'));
+  let coveredUntil = -1;
+  const measured: MeasuredRow[] = rows.map((row, index) => {
+    const breakable = index > coveredUntil;
+    for (const cell of Array.from(row.children) as HTMLTableCellElement[]) {
+      coveredUntil = Math.max(coveredUntil, index + Math.max(1, cell.rowSpan || 1) - 1);
+    }
+    const height = row.offsetHeight;
+    return { element: row, top: row.offsetTop, height, breakable, groupHeight: height };
+  });
+  // A group ends where the next row the table may break before starts, or at the bottom of the last row.
+  let groupEnd = measured.reduce((bottom, row) => Math.max(bottom, row.top + row.height), 0);
+  for (const row of [...measured].reverse()) {
+    row.groupHeight = groupEnd - row.top;
+    if (row.breakable) groupEnd = row.top;
+  }
+  return measured;
+};
+
+/** Height of a table up to its first row it may break before: the part that has to fit on the sheet it starts on. */
+const headHeight = (rows: MeasuredRow[], height: number) => {
+  const first = rows[0];
+  return first ? first.top + first.groupHeight : height;
+};
+
 /** Computed bottom margin of a block in pixels, `0` when there is no block. */
 const marginBottom = (element: HTMLElement | undefined) =>
   element ? Number.parseFloat(getComputedStyle(element).marginBottom) || 0 : 0;
@@ -145,6 +227,8 @@ const numberFootnotes = (blocks: string[][]): SheetFootnote[][] => {
  * @param measureNotes Height the notes block of the given footnotes takes on a sheet.
  */
 const paginate = (root: HTMLElement, page: PageMetrics, measureNotes: (notes: SheetFootnote[]) => number): Layout => {
+  // Tables of the page view draw their borders so that rows moved to the next sheet take them along.
+  if (!root.hasAttribute(PAGED_ATTRIBUTE)) root.setAttribute(PAGED_ATTRIBUTE, '');
   const children = Array.from(root.children) as HTMLElement[];
   const base = orientationOf(page);
   const orientations = blockOrientations(children, base);
@@ -195,22 +279,35 @@ const paginate = (root: HTMLElement, page: PageMetrics, measureNotes: (notes: Sh
       const own = ownSpace(element);
       appliedShift += Math.max(gap + own, previousMargin) - Math.max(own, previousMargin);
     }
-    return { element, top: element.offsetTop - appliedShift, height: element.offsetHeight };
+    // The space a split table keeps for its moved rows is not part of its natural height.
+    const tableShift = readShift(element, TABLE_SHIFT_ATTRIBUTE);
+    const block = {
+      element,
+      top: element.offsetTop - appliedShift,
+      height: element.offsetHeight - tableShift,
+      rows: measureRows(element)
+    };
+    appliedShift += tableShift;
+    return block;
   });
 
   const gaps: number[] = [];
+  /** Shift of every row of every table, in the order of `measured`; empty for other blocks. */
+  const rowShifts: number[][] = [];
   let added = 0;
   let pageIndex = 0;
   let breakBefore = false;
-  measured.forEach(({ element, top: naturalTop, height }, index) => {
+  measured.forEach(({ element, top: naturalTop, height, rows }, index) => {
     let top = naturalTop + added;
     const notes = blockNotes[index] ?? [];
     // A sheet takes the orientation of the block that opens it; orientations only change after a section break,
     // which always opens a new sheet.
     sheetOrientation = orientations[index] ?? base;
+    // A table only needs its rows up to the first place it may break to fit; the rest can go on the next sheets.
+    const fitHeight = rows ? headHeight(rows, height) : height;
     if (
       top > contentStart(pageIndex) + EPSILON &&
-      (breakBefore || top + height > textEnd(pageIndex, notes) + EPSILON)
+      (breakBefore || top + fitHeight > textEnd(pageIndex, notes) + EPSILON)
     ) {
       pageIndex += 1;
     }
@@ -227,13 +324,47 @@ const paginate = (root: HTMLElement, page: PageMetrics, measureNotes: (notes: Sh
       top = start;
     }
     gaps.push(gap);
-    // A block taller than the text area runs on over the following sheets.
-    while (top + height > textEnd(pageIndex) + EPSILON && top + height > nextContentStart(pageIndex)) pageIndex += 1;
+    if (rows) {
+      // A row that would cross the bottom of the text area moves, with every row after it, to the top of the next
+      // sheet; rows joined by a cell spanning them move together.
+      let shift = 0;
+      rowShifts[index] = rows.map((row, rowIndex) => {
+        let rowTop = top + row.top + shift;
+        if (
+          rowIndex > 0 &&
+          row.breakable &&
+          rowTop > contentStart(pageIndex) + EPSILON &&
+          rowTop + row.groupHeight > textEnd(pageIndex) + EPSILON
+        ) {
+          pageIndex += 1;
+          const start = contentStart(pageIndex);
+          if (rowTop < start) {
+            shift += start - rowTop;
+            rowTop = start;
+          }
+        }
+        // A row taller than the text area runs on over the following sheets.
+        while (rowTop + row.height > textEnd(pageIndex) + EPSILON && rowTop + row.height > nextContentStart(pageIndex))
+          pageIndex += 1;
+        return shift;
+      });
+      added += shift;
+    } else {
+      // A block taller than the text area runs on over the following sheets.
+      while (top + height > textEnd(pageIndex) + EPSILON && top + height > nextContentStart(pageIndex)) pageIndex += 1;
+    }
     breakBefore = breaksPage(element);
   });
 
   children.forEach((element, index) => {
     writeGap(element, gaps[index] ?? 0);
+    const block = measured[index];
+    if (!block?.rows) return;
+    const shifts = rowShifts[index] ?? [];
+    block.rows.forEach((row, rowIndex) => {
+      writeRowShift(row.element, shifts[rowIndex] ?? 0);
+    });
+    writeTableShift(element, shifts.at(-1) ?? 0);
   });
   const pageCount = pageIndex + 1;
   sheetAt(pageIndex, sheetOrientation);
@@ -274,17 +405,36 @@ export const splitIntoPages = (
   pageCount: number,
   geometry: readonly SheetGeometry[] = uniformSheets(metrics, pageCount)
 ): string[] => {
-  const sheets: HTMLElement[][] = Array.from({ length: Math.max(1, pageCount) }, () => []);
+  const sheets: Node[][] = Array.from({ length: Math.max(1, pageCount) }, () => []);
+  const sheetOf = (offset: number) => Math.min(sheets.length - 1, sheetIndexAt(geometry, offset));
   for (const child of Array.from(root.children) as HTMLElement[]) {
     // Page and section breaks are already expressed by the split itself.
     if (breaksPage(child)) continue;
-    const index = Math.min(sheets.length - 1, sheetIndexAt(geometry, child.offsetTop));
-    sheets[index]?.push(child);
+    if (!child.hasAttribute(TABLE_SHIFT_ATTRIBUTE)) {
+      sheets[sheetOf(child.offsetTop)]?.push(child.cloneNode(true));
+      continue;
+    }
+    // A table split over sheets becomes one table per sheet, each with the rows shown on that sheet.
+    const parts = new Map<number, HTMLElement>();
+    for (const row of Array.from(child.querySelectorAll<HTMLElement>(':scope > tbody > tr'))) {
+      const index = sheetOf(child.offsetTop + row.offsetTop + readShift(row, ROW_SHIFT_ATTRIBUTE));
+      let part = parts.get(index);
+      if (!part) {
+        part = child.cloneNode(false) as HTMLElement;
+        for (const colgroup of Array.from(child.querySelectorAll(':scope > colgroup'))) {
+          part.append(colgroup.cloneNode(true));
+        }
+        part.append(document.createElement('tbody'));
+        parts.set(index, part);
+        sheets[index]?.push(part);
+      }
+      part.querySelector(':scope > tbody')?.append(row.cloneNode(true));
+    }
   }
   let firstFootnote = 1;
   return sheets.map(blocks => {
     const container = document.createElement('div');
-    container.append(...blocks.map(block => block.cloneNode(true)));
+    container.append(...blocks);
     const references = container.querySelectorAll(FOOTNOTE_SELECTOR).length;
     cleanEditorArtifacts(container, true, firstFootnote);
     firstFootnote += references;
@@ -297,6 +447,15 @@ const clearGaps = (root: HTMLElement): Layout => {
   for (const element of Array.from(root.querySelectorAll<HTMLElement>(`:scope > [${GAP_ATTRIBUTE}]`))) {
     writeGap(element, 0);
   }
+  for (const table of Array.from(root.querySelectorAll<HTMLElement>(`:scope > [${TABLE_SHIFT_ATTRIBUTE}]`))) {
+    writeTableShift(table, 0);
+  }
+  for (const row of Array.from(
+    root.querySelectorAll<HTMLElement>(`:scope > table > tbody > [${ROW_SHIFT_ATTRIBUTE}]`)
+  )) {
+    writeRowShift(row, 0);
+  }
+  if (root.hasAttribute(PAGED_ATTRIBUTE)) root.removeAttribute(PAGED_ATTRIBUTE);
   const notes = numberFootnotes(readBlockFootnotes(Array.from(root.children) as HTMLElement[])).flat();
   return { pageCount: SINGLE_PAGE, footnotes: [notes], sheets: [] };
 };
